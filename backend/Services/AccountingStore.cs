@@ -3856,7 +3856,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             _entries.Add(journal);
 
             // 2. Auto Stock-Out for Physical products & Post GAAP Perpetual COGS Journal
-            if (!invoice.StockReduced)
+            if (!invoice.StockReduced && invoice.Lines != null)
             {
                 var warehouse = _warehouses.FirstOrDefault(w => w.CompanyId == invoice.CompanyId) ?? _warehouses.FirstOrDefault();
                 decimal totalCogs = 0m;
@@ -4983,8 +4983,81 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             return true; 
         } 
     }
-    public bool Transition(Guid id, JournalStatus target, TransitionRequest request, out JournalEntry? entry, out string? error) { lock (_lock) { entry = FindEntry(id); error = null; if (entry is null) { error = "Journal entry not found."; return false; } entry.Status = target; entry.Version++; AddEvent(entry, "on_status_change", "system", request.Note ?? $"Journal entry {target.ToString().ToLowerInvariant()}"); Persist(); return true; } }
-    public bool BatchPost(BatchPostRequest request, out object result, out string? error) { lock (_lock) { var selected = request.EntryIds.Select(FindEntry).Where(x => x != null).ToList(); foreach (var item in selected!) { item!.Status = JournalStatus.Posted; item.Version++; AddEvent(item, "on_post", "system", "Posted by batch"); } Persist(); result = new { posted = selected.Count }; error = null; return true; } }
+    public bool Transition(Guid id, JournalStatus target, TransitionRequest request, out JournalEntry? entry, out string? error)
+    {
+        lock (_lock)
+        {
+            entry = FindEntry(id);
+            error = null;
+            if (entry is null) { error = "Journal entry not found."; return false; }
+            entry.Status = target;
+            entry.Version++;
+            AddEvent(entry, "on_status_change", "system", request.Note ?? $"Journal entry {target.ToString().ToLowerInvariant()}");
+
+            if (target == JournalStatus.Posted && entry.AutoReverse)
+            {
+                var revDate = entry.ReversalDate ?? new DateOnly(entry.Date.Year, entry.Date.Month, 1).AddMonths(1);
+                var reversal = new JournalEntry
+                {
+                    Date = revDate,
+                    Reference = $"REV-{entry.Reference}",
+                    Description = $"Auto-reversal of {entry.Reference}: {entry.Description}",
+                    Lines = entry.Lines.Select(l => new JournalLine(l.AccountId, l.Credit, l.Debit, l.Memo, l.Comment, l.CurrencyCode, l.ExchangeRate, l.CompanyId)).ToList(),
+                    TransactionType = entry.TransactionType,
+                    CurrencyCode = entry.CurrencyCode,
+                    ExchangeRate = entry.ExchangeRate,
+                    CompanyId = entry.CompanyId,
+                    CounterpartyCompanyId = entry.CounterpartyCompanyId,
+                    Status = JournalStatus.Draft,
+                    ReversalOfId = entry.Id
+                };
+                _entries.Add(reversal);
+                AddEvent(reversal, "on_create", "system", $"Auto-reversal entry created for {entry.Reference}");
+            }
+
+            Persist();
+            return true;
+        }
+    }
+
+    public bool BatchPost(BatchPostRequest request, out object result, out string? error)
+    {
+        lock (_lock)
+        {
+            var selected = request.EntryIds.Select(FindEntry).Where(x => x != null).ToList();
+            foreach (var item in selected!)
+            {
+                item!.Status = JournalStatus.Posted;
+                item.Version++;
+                AddEvent(item, "on_post", "system", "Posted by batch");
+
+                if (item.AutoReverse)
+                {
+                    var revDate = item.ReversalDate ?? new DateOnly(item.Date.Year, item.Date.Month, 1).AddMonths(1);
+                    var reversal = new JournalEntry
+                    {
+                        Date = revDate,
+                        Reference = $"REV-{item.Reference}",
+                        Description = $"Auto-reversal of {item.Reference}: {item.Description}",
+                        Lines = item.Lines.Select(l => new JournalLine(l.AccountId, l.Credit, l.Debit, l.Memo, l.Comment, l.CurrencyCode, l.ExchangeRate, l.CompanyId)).ToList(),
+                        TransactionType = item.TransactionType,
+                        CurrencyCode = item.CurrencyCode,
+                        ExchangeRate = item.ExchangeRate,
+                        CompanyId = item.CompanyId,
+                        CounterpartyCompanyId = item.CounterpartyCompanyId,
+                        Status = JournalStatus.Draft,
+                        ReversalOfId = item.Id
+                    };
+                    _entries.Add(reversal);
+                    AddEvent(reversal, "on_create", "system", $"Auto-reversal entry created for {item.Reference}");
+                }
+            }
+            Persist();
+            result = new { posted = selected.Count };
+            error = null;
+            return true;
+        }
+    }
     public JournalEntry? FindEntry(Guid id) => _entries.FirstOrDefault(x => x.Id == id);
     public IEnumerable<JournalEvent> Events(Guid id) => _journalEvents.Where(x => x.JournalEntryId == id).OrderByDescending(x => x.OccurredAt);
     public void AddAttachment(Guid id, AttachmentRequest attachment) { var entry = FindEntry(id) ?? throw new KeyNotFoundException(); entry.Attachments.Add(new Attachment(attachment.FileName, attachment.ContentType, attachment.Url, DateTime.UtcNow)); AddEvent(entry, "attachment_added", "system", attachment.FileName); Persist(); }

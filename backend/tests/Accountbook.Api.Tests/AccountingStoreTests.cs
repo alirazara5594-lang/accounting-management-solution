@@ -1,5 +1,6 @@
 using Zenabook.Api.Models;
 using Zenabook.Api.Services;
+using Xunit;
 
 namespace Accountbook.Api.Tests;
 
@@ -9,8 +10,8 @@ public class AccountingStoreTests
     public void PostingEntryWithAutoReverseCreatesReversalOnFirstDayOfNextMonth()
     {
         var store = new AccountingStore();
-        var debitAccount = store.Accounts.First(a => a.Code == "1110");
-        var creditAccount = store.Accounts.First(a => a.Code == "4100");
+        var debitAccount = store.Accounts.First(a => a.Code == "11101");
+        var creditAccount = store.Accounts.First(a => a.Code == "41000");
         var entryDate = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var request = new JournalEntryRequest(
