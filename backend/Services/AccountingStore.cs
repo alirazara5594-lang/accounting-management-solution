@@ -2460,9 +2460,16 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 }
             }
 
+            var billNum = request.BillNumber;
+            if (string.IsNullOrWhiteSpace(billNum))
+            {
+                var max = _vendorBills.Select(b => b.BillNumber).Where(n => n.StartsWith("BILL-") && int.TryParse(n[5..], out _)).Select(n => int.Parse(n[5..])).DefaultIfEmpty(0).Max();
+                billNum = $"BILL-{(max + 1):D5}";
+            }
+
             bill = new VendorBill
             {
-                BillNumber = request.BillNumber,
+                BillNumber = billNum,
                 VendorInvoiceNumber = request.VendorInvoiceNumber,
                 VendorId = request.VendorId,
                 PurchaseOrderId = request.PurchaseOrderId,

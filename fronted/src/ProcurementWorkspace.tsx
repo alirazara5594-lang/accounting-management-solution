@@ -1625,6 +1625,16 @@ export const ProcurementWorkspace: React.FC<{ activeEntityId: string; entities?:
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">System Bill Number (Auto-Sequence)</label>
+                <input
+                  type="text"
+                  readOnly
+                  value={billForm.billNumber || 'Auto-generated'}
+                  className="bg-gray-100 font-mono font-bold text-gray-700 w-full rounded-xl border border-gray-200 px-3 py-2 text-xs"
+                />
+              </div>
+
               <label>
                 * Supplier Invoice Number
                 <input required placeholder="e.g. INV-2026-991" value={billForm.vendorInvoiceNumber} onChange={e => setBillForm({ ...billForm, vendorInvoiceNumber: e.target.value })} />
