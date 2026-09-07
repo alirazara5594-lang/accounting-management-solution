@@ -5504,11 +5504,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\Project\\accountbook\\backend\\tests\\Accountbook.Api.Tests\\Accountbook.Api.Tests.csproj",
+      "projectUniqueName": "D:\\Project\\accounting-management-solution\\backend\\tests\\Accountbook.Api.Tests\\Accountbook.Api.Tests.csproj",
       "projectName": "Accountbook.Api.Tests",
-      "projectPath": "D:\\Project\\accountbook\\backend\\tests\\Accountbook.Api.Tests\\Accountbook.Api.Tests.csproj",
+      "projectPath": "D:\\Project\\accounting-management-solution\\backend\\tests\\Accountbook.Api.Tests\\Accountbook.Api.Tests.csproj",
       "packagesPath": "C:\\Users\\Muhammad Ali\\.nuget\\packages\\",
-      "outputPath": "D:\\Project\\accountbook\\backend\\tests\\Accountbook.Api.Tests\\obj\\",
+      "outputPath": "D:\\Project\\accounting-management-solution\\backend\\tests\\Accountbook.Api.Tests\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\Muhammad Ali\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -5524,8 +5524,8 @@
           "framework": "net10.0",
           "targetAlias": "net10.0",
           "projectReferences": {
-            "D:\\Project\\accountbook\\backend\\Zenabook.Api.csproj": {
-              "projectPath": "D:\\Project\\accountbook\\backend\\Zenabook.Api.csproj"
+            "D:\\Project\\accounting-management-solution\\backend\\Zenabook.Api.csproj": {
+              "projectPath": "D:\\Project\\accounting-management-solution\\backend\\Zenabook.Api.csproj"
             }
           }
         }
