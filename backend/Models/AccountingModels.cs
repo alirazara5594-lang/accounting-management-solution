@@ -321,7 +321,7 @@ public class PurchaseRequestLine
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public Guid? ProductId { get; set; }
-    public required string Description { get; set; }
+    public string Description { get; set; } = string.Empty;
     public decimal Quantity { get; set; } = 1;
     public decimal EstimatedUnitPrice { get; set; } = 0;
     public decimal EstimatedTotal => Quantity * EstimatedUnitPrice;
@@ -333,11 +333,13 @@ public class PurchaseRequestLine
 public class PurchaseRequest
 {
     public Guid Id { get; init; } = Guid.NewGuid();
-    public required string RequestNumber { get; set; }
-    public required string RequesterName { get; set; }
+    public string RequestNumber { get; set; } = string.Empty;
+    private string _requesterName = "Procurement Admin";
+    public string RequesterName { get => _requesterName; set => _requesterName = value; }
+    public string? RequestorName { get => _requesterName; set => _requesterName = value ?? _requesterName; }
     public string Department { get; set; } = "General";
     public string Priority { get; set; } = "Medium";
-    public DateOnly Date { get; set; }
+    public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today);
     public DateOnly? RequiredByDate { get; set; }
     public PurchaseRequestStatus Status { get; set; } = PurchaseRequestStatus.Draft;
     public decimal TotalEstimatedAmount => Lines.Sum(l => l.EstimatedTotal);
@@ -351,7 +353,7 @@ public class RequestForQuotationLine
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public Guid? ProductId { get; set; }
-    public required string Description { get; set; }
+    public string Description { get; set; } = string.Empty;
     public decimal Quantity { get; set; } = 1;
     public LineDestination Destination { get; set; } = LineDestination.Inventory;
 }
@@ -359,11 +361,11 @@ public class RequestForQuotationLine
 public class RequestForQuotation
 {
     public Guid Id { get; init; } = Guid.NewGuid();
-    public required string RfqNumber { get; set; }
+    public string RfqNumber { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public Guid? PurchaseRequestId { get; set; }
-    public DateOnly Date { get; set; }
-    public DateOnly Deadline { get; set; }
+    public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    public DateOnly Deadline { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(7));
     public RfqStatus Status { get; set; } = RfqStatus.Open;
     public List<RequestForQuotationLine> Lines { get; set; } = [];
     public Guid CompanyId { get; set; }

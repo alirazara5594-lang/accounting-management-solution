@@ -1715,6 +1715,11 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 var max = _rfqs.Select(r => r.RfqNumber).Where(n => n.StartsWith("RFQ-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0).Max();
                 rfq.RfqNumber = $"RFQ-{(max + 1):D5}";
             }
+            if (rfq.PurchaseRequestId.HasValue)
+            {
+                var pr = _prs.FirstOrDefault(x => x.Id == rfq.PurchaseRequestId.Value);
+                if (pr != null) pr.Status = PurchaseRequestStatus.Ordered;
+            }
             _rfqs.Add(rfq);
             Persist();
             return rfq;
