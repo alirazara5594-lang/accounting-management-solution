@@ -40,4 +40,42 @@ public class AccountingStoreTests
         Assert.Equal(100m, reversal.Lines.Single(l => l.AccountId == creditAccount.Id).Debit);
         Assert.Equal(100m, reversal.Lines.Single(l => l.AccountId == debitAccount.Id).Credit);
     }
+
+    [Fact]
+    public void DirectBillAndPoBillShareUnifiedSequentialNumbering()
+    {
+        var store = new AccountingStore();
+        
+        // 1. Create a Direct Bill (no PO) with empty BillNumber
+        var directBill = store.CreateVendorBill(new VendorBill
+        {
+            BillNumber = "",
+            VendorInvoiceNumber = "SUPP-INV-001",
+            VendorId = Guid.NewGuid(),
+            Date = DateOnly.FromDateTime(DateTime.Today),
+            DueDate = DateOnly.FromDateTime(DateTime.Today.AddDays(30)),
+            Lines = [new VendorBillLine { Description = "Consulting Expense", Quantity = 1, UnitPrice = 500m }]
+        });
+
+        // 2. Create a PO Bill (with PurchaseOrderId) with empty BillNumber
+        var poBill = store.CreateVendorBill(new VendorBill
+        {
+            BillNumber = "",
+            VendorInvoiceNumber = "SUPP-INV-002",
+            VendorId = Guid.NewGuid(),
+            PurchaseOrderId = Guid.NewGuid(),
+            Date = DateOnly.FromDateTime(DateTime.Today),
+            DueDate = DateOnly.FromDateTime(DateTime.Today.AddDays(30)),
+            Lines = [new VendorBillLine { Description = "Raw Materials", Quantity = 10, UnitPrice = 100m }]
+        });
+
+        // Extract sequential numbers
+        var directNum = int.Parse(directBill.BillNumber.Substring(5));
+        var poNum = int.Parse(poBill.BillNumber.Substring(5));
+
+        // Assert that PO Bill immediately follows Direct Bill in continuous sequence
+        Assert.Equal(directNum + 1, poNum);
+        Assert.StartsWith("BILL-", directBill.BillNumber);
+        Assert.StartsWith("BILL-", poBill.BillNumber);
+    }
 }

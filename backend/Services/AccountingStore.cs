@@ -1940,7 +1940,11 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         {
             if (string.IsNullOrWhiteSpace(bill.BillNumber))
             {
-                var max = _vendorBills.Select(b => b.BillNumber).Where(n => n.StartsWith("BILL-") && int.TryParse(n[5..], out _)).Select(n => int.Parse(n[5..])).DefaultIfEmpty(0).Max();
+                var max = _vendorBills
+                    .Where(b => !string.IsNullOrWhiteSpace(b.BillNumber) && b.BillNumber.StartsWith("BILL-", StringComparison.OrdinalIgnoreCase))
+                    .Select(b => int.TryParse(b.BillNumber[5..], out var val) ? val : 0)
+                    .DefaultIfEmpty(0)
+                    .Max();
                 bill.BillNumber = $"BILL-{(max + 1):D5}";
             }
             bill.Status = VendorBillStatus.Draft;
@@ -2463,7 +2467,11 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             var billNum = request.BillNumber;
             if (string.IsNullOrWhiteSpace(billNum))
             {
-                var max = _vendorBills.Select(b => b.BillNumber).Where(n => n.StartsWith("BILL-") && int.TryParse(n[5..], out _)).Select(n => int.Parse(n[5..])).DefaultIfEmpty(0).Max();
+                var max = _vendorBills
+                    .Where(b => !string.IsNullOrWhiteSpace(b.BillNumber) && b.BillNumber.StartsWith("BILL-", StringComparison.OrdinalIgnoreCase))
+                    .Select(b => int.TryParse(b.BillNumber[5..], out var val) ? val : 0)
+                    .DefaultIfEmpty(0)
+                    .Max();
                 billNum = $"BILL-{(max + 1):D5}";
             }
 
