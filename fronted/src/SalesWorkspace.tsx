@@ -4,15 +4,21 @@ import autoTable from 'jspdf-autotable'
 import {
   Receipt, Plus, Check, X, ShieldCheck, ArrowRight,
   ArrowLeft, Hash, Users, FileText, Coins, CheckCircle2, Eye,
-  Download, Pencil, Ban
+  Download, Pencil, Ban, ChevronDown, DollarSign
 } from 'lucide-react'
-import { useSalesStore, useCustomersStore, useProductsStore, useCoaStore } from './stores'
+import { useSalesStore, useCustomersStore, useProductsStore, useCoaStore, useAssetsInventoryStore } from './stores'
 import { useFormDraft } from './hooks/useFormDraft'
 import { DataToolbar } from '@/components/ui/data-toolbar'
 import { KpiCard, KpiGrid } from './components/ui/kpi-card'
 import { StatusChip } from './components/ui/status-chip'
 import { EmptyState, TableSkeleton } from './components/ui/empty-state'
 import { money } from './lib/currency'
+import { getActiveTaxCodes } from './lib/taxLocalization'
+import { getGlobalNextInvoiceNumber, formatInvoiceNumber } from './lib/invoiceNumbering'
+import { CompactTaxSelect } from './components/CompactTaxSelect'
+import { CompactDiscountTypeSelect } from './components/CompactDiscountTypeSelect'
+import { CompactProductSelect } from './components/CompactProductSelect'
+import { CompactSelect } from './components/CompactSelect'
 
 const statusStyles: Record<string, { label: string; hex: string }> = {
   Draft: { label: 'Draft', hex: '#94a3b8' },
@@ -32,6 +38,8 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
   const createInvoiceStore = useSalesStore((s) => s.createInvoice)
   const updateInvoiceStore = useSalesStore((s) => s.updateInvoice)
   const updateInvoiceStatusStore = useSalesStore((s) => s.updateInvoiceStatus)
+  const postInvoiceStore = useSalesStore((s) => s.postInvoice)
+  const updateEstimateStatusStore = useSalesStore((s) => s.updateEstimateStatus)
 
   const customers = useCustomersStore((s) => s.customers)
   const fetchCustomers = useCustomersStore((s) => s.fetchCustomers)
@@ -41,16 +49,34 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
 
   const accounts = useCoaStore((s) => s.accounts)
   const fetchAccounts = useCoaStore((s) => s.fetchAccounts)
+  const coaMappings = useCoaStore((s) => s.mappings)
+  const fetchMappings = useCoaStore((s) => s.fetchMappings)
+
+  const warehouses = useAssetsInventoryStore((s) => s.warehouses)
+  const fetchWarehouses = useAssetsInventoryStore((s) => s.fetchWarehouses)
+  const stockLevels = useAssetsInventoryStore((s) => s.stockLevels)
+  const fetchStockLevels = useAssetsInventoryStore((s) => s.fetchStockLevels)
+  const createStockTransaction = useAssetsInventoryStore((s) => s.createStockTransaction)
 
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingInvoice, setEditingInvoice] = useState<any>(null)
   const [modalTab, setModalTab] = useState<'details' | 'lines' | 'summary' | 'preview'>('details')
   const [postModal, setPostModal] = useState<any>(null)
+  const [postForm, setPostForm] = useState({ arAccId: '', revenueAccId: '', taxLiabilityAccId: '' })
   const [toast, setToast] = useState('')
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [pendingInvoiceNumber, setPendingInvoiceNumber] = useState<string>('')
+  const [convertedEstimateId, setConvertedEstimateId] = useState<string | null>(null)
+  const [creditOverride, setCreditOverride] = useState(false)
+
+  // Active Regional Tax Codes
+  const applicableTaxCodes = useMemo(() => {
+    return getActiveTaxCodes()
+  }, [activeEntityId])
+
+  const defaultTaxRate = String(applicableTaxCodes[0]?.rate ?? 0)
 
   // Form state
   const [form, setForm] = useState({
@@ -63,16 +89,13 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
   })
 
   const [lines, setLines] = useState([
-    { productId: '', productName: '', description: '', quantity: '1', unitPrice: '0', discountType: 0, discountValue: '0', taxPercent: '0' }
+    { productId: '', productName: '', description: '', quantity: '1', unitPrice: '0', discountType: 0, discountValue: '0', taxPercent: defaultTaxRate, warehouseId: '' }
   ])
 
   const { saveDraft, clearDraft } = useFormDraft('sales_invoice', { form, lines }, (saved: any) => {
     if (saved.form) setForm(saved.form)
     if (saved.lines) setLines(saved.lines)
-  }, showForm)
-
-  // Post form
-  const [postForm, setPostForm] = useState({ arAccId: '', revenueAccId: '', taxLiabilityAccId: '' })
+  }, showForm, !!editingInvoice)
 
   const fetchData = async () => {
     setLoading(true)
@@ -81,15 +104,70 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
         fetchInvoices(activeEntityId),
         fetchCustomers(activeEntityId),
         fetchProducts(),
-        fetchAccounts()
+        fetchAccounts(),
+        fetchWarehouses(activeEntityId),
+        fetchStockLevels(activeEntityId)
       ])
     } catch {}
     setLoading(false)
   }
 
+  const checkPendingQuoteConversion = () => {
+    try {
+      const raw = localStorage.getItem('ams_pending_invoice_from_quote')
+      if (raw) {
+        const data = JSON.parse(raw)
+        localStorage.removeItem('ams_pending_invoice_from_quote')
+
+        const nextRef = computeNextInvoiceNumber()
+        setPendingInvoiceNumber(nextRef)
+        setConvertedEstimateId(data.estimateId || null)
+
+        setForm({
+          customerId: data.customerId || customers[0]?.id || '',
+          invoiceDate: new Date().toISOString().slice(0, 10),
+          dueDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+          reference: nextRef,
+          notes: data.notes || (data.estimateNumber ? `Converted from quotation ${data.estimateNumber}` : ''),
+          currencyCode: data.currencyCode || 'PKR'
+        })
+
+        if (data.lines && data.lines.length > 0) {
+          setLines(data.lines)
+        }
+
+        setEditingInvoice(null)
+        setModalTab('details')
+        setShowForm(true)
+        notify(`✓ Pre-filled from Quote ${data.estimateNumber || ''}! Review each tab and confirm.`)
+      }
+    } catch {}
+  }
+
   useEffect(() => {
-    fetchData()
+    fetchData().then(() => {
+      checkPendingQuoteConversion()
+    })
   }, [activeEntityId])
+
+  useEffect(() => {
+    if (coaMappings.length === 0) {
+      fetchMappings()
+    }
+  }, [coaMappings.length, fetchMappings])
+
+  useEffect(() => {
+    const handleHash = () => {
+      checkPendingQuoteConversion()
+    }
+    window.addEventListener('hashchange', handleHash)
+    // Also check on interval/mount
+    const t = setTimeout(checkPendingQuoteConversion, 300)
+    return () => {
+      window.removeEventListener('hashchange', handleHash)
+      clearTimeout(t)
+    }
+  }, [])
 
   const notify = (m: string) => {
     setToast(m)
@@ -97,23 +175,21 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
   }
 
   const computeNextInvoiceNumber = () => {
-    let maxNum = 0
-    for (const item of invoices) {
-      const str = (item.invoiceNumber || item.reference || '') + ''
-      const match = str.match(/INV-(\d+)/i)
-      if (match) {
-        const num = parseInt(match[1], 10)
-        if (!isNaN(num) && num > maxNum) maxNum = num
-      }
-    }
-    return `INV-${(maxNum + 1).toString().padStart(5, '0')}`
+    return getGlobalNextInvoiceNumber()
   }
 
   const getFormattedInvoiceNumber = (rawNum: string, index: number) => {
-    if (!rawNum) return `INV-${(index + 1).toString().padStart(5, '0')}`
+    if (!rawNum || rawNum.startsWith('EST-') || rawNum.startsWith('INV-202') || rawNum.length > 10) {
+      return `INV-${(index + 1).toString().padStart(5, '0')}`
+    }
     const match = rawNum.match(/INV-(\d+)/i)
-    if (match) return `INV-${parseInt(match[1], 10).toString().padStart(5, '0')}`
-    return rawNum
+    if (match) {
+      const num = parseInt(match[1], 10)
+      if (!isNaN(num) && num < 100000) {
+        return `INV-${num.toString().padStart(5, '0')}`
+      }
+    }
+    return `INV-${(index + 1).toString().padStart(5, '0')}`
   }
 
   const openCreateModal = () => {
@@ -132,7 +208,7 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
       notes: 'Payment is due within invoice terms. Thank you for your business.',
       currencyCode: 'PKR'
     })
-    setLines([{ productId: '', productName: '', description: '', quantity: '1', unitPrice: '0', discountType: 0, discountValue: '0', taxPercent: '0' }])
+    setLines([{ productId: '', productName: '', description: '', quantity: '1', unitPrice: '0', discountType: 0, discountValue: '0', taxPercent: defaultTaxRate, warehouseId: '' }])
     setModalTab('details')
     setShowForm(true)
   }
@@ -159,10 +235,11 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
               unitPrice: String(l.unitPrice || 0),
               discountType: l.discountType ?? 0,
               discountValue: String(l.discountValue || l.discountAmount || 0),
-              taxPercent: String(l.taxPercent || 0)
+              taxPercent: String(l.taxPercent || 0),
+              warehouseId: l.warehouseId || ''
             }
           })
-        : [{ productId: '', productName: '', description: inv.notes || inv.reference || 'Commercial Tax Invoice Items', quantity: '1', unitPrice: String(inv.subTotal || inv.totalAmount || 0), discountType: 0, discountValue: String(inv.discountTotal || 0), taxPercent: '0' }]
+        : [{ productId: '', productName: '', description: inv.notes || inv.reference || 'Commercial Tax Invoice Items', quantity: '1', unitPrice: String(inv.subTotal || inv.totalAmount || 0), discountType: 0, discountValue: String(inv.discountTotal || 0), taxPercent: '0', warehouseId: '' }]
     )
     setModalTab('details')
     setShowForm(true)
@@ -177,24 +254,37 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
   const cancelInvoice = async (inv: any) => {
     try {
       await updateInvoiceStatusStore(inv.id, 3) // 3 = Void / Cancelled
-      notify(`✓ Invoice ${inv.invoiceNumber || inv.reference} marked as Cancelled / Void.`)
-      await fetchData()
-    } catch (e: any) {
-      notify(e.message || 'Failed to cancel invoice')
-    }
-  }
-
-  const openPostModal = (inv: any) => {
-    const mappingsStr = localStorage.getItem('system_account_mappings')
-    let mappings: any = {}
-    if (mappingsStr) {
       try {
-        mappings = JSON.parse(mappingsStr)
+        const allLocal = JSON.parse(localStorage.getItem('ams_local_invoices_list') || '[]');
+        const updated = allLocal.map((x: any) => (x.id === inv.id || x.invoiceNumber === inv.invoiceNumber ? { ...x, status: 3 } : x));
+        localStorage.setItem('ams_local_invoices_list', JSON.stringify(updated));
       } catch {}
+      notify(`✓ Invoice ${inv.invoiceNumber || inv.reference} marked as Cancelled / Void. Reversal posted to General Ledger.`);
+      await fetchData();
+    } catch (e: any) {
+      notify(e.message || 'Failed to cancel invoice');
     }
-    const arAccount = accounts.find((a: any) => a.id === mappings.arAccountId || a.code === '12000')
-    const revAccount = accounts.find((a: any) => a.id === mappings.revenueAccountId || a.code === '41100')
-    const taxAccount = accounts.find((a: any) => a.id === mappings.taxAccountId || a.code === '22000')
+  };
+
+  const openPostModal = async (inv: any) => {
+    if (!inv) return
+    if (!accounts || accounts.length === 0) {
+      try { fetchAccounts() } catch {}
+    }
+    let liveMappings = coaMappings
+    if (!liveMappings || liveMappings.length === 0) {
+      try { liveMappings = await fetchMappings() } catch {}
+    }
+    const getMappedId = (key: string, fallbackCode: string) => {
+      const found = liveMappings?.find((m: any) => m.mappingKey === key)
+      if (found?.accountId) return found.accountId
+      const fallback = accs.find((a: any) => a.code === fallbackCode)
+      return fallback?.id || ''
+    }
+    const accs = Array.isArray(accounts) ? accounts.filter((a: any) => a && typeof a === 'object') : []
+    const arAccount = accs.find((a: any) => a.id === getMappedId('Customer Receivables', '12000')) || accs.find((a: any) => a.code === '12000' || a.name?.toLowerCase().includes('receivable'))
+    const revAccount = accs.find((a: any) => a.id === getMappedId('Sales', '41100')) || accs.find((a: any) => a.code === '41100' || a.name?.toLowerCase().includes('revenue'))
+    const taxAccount = accs.find((a: any) => a.id === getMappedId('Taxes', '22000')) || accs.find((a: any) => a.code === '22000' || a.name?.toLowerCase().includes('tax'))
 
     setPostModal(inv)
     setPostForm({
@@ -205,11 +295,11 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
   }
 
   const addLine = () =>
-    setLines([...lines, { productId: '', productName: '', description: '', quantity: '1', unitPrice: '0', discountType: 0, discountValue: '0', taxPercent: '0' }])
+    setLines([...lines, { productId: '', productName: '', description: '', quantity: '1', unitPrice: '0', discountType: 0, discountValue: '0', taxPercent: defaultTaxRate, warehouseId: '' }])
   
   const removeLine = (i: number) => setLines(lines.filter((_, idx) => idx !== i))
 
-  const updateLine = (i: number, field: string, value: string) => {
+  const updateLine = (i: number, field: string, value: any) => {
     const updated = [...lines]
     updated[i] = { ...updated[i], [field]: value }
     if (field === 'productId' && value) {
@@ -260,36 +350,85 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
   const taxTotal = totals.tax
   const netTotal = totals.total
 
+  const selectedCustomer = useMemo(() => {
+    return customers.find((c: any) => c.id === form.customerId)
+  }, [customers, form.customerId])
+
+  const customerCreditLimit = parseFloat(String(selectedCustomer?.creditLimit || '0'))
+
+  const currentCustomerBalance = useMemo(() => {
+    if (!form.customerId) return 0
+    return invoices
+      .filter((inv: any) =>
+        inv.customerId === form.customerId &&
+        inv.id !== editingInvoice?.id &&
+        inv.status !== 0 &&
+        inv.status !== '0' &&
+        String(inv.status).toLowerCase() !== 'draft' &&
+        inv.status !== 3 &&
+        String(inv.status).toLowerCase() !== 'void'
+      )
+      .reduce((sum: number, inv: any) => sum + (parseFloat(inv.amountDue ?? inv.totalAmount) || 0), 0)
+  }, [invoices, form.customerId, editingInvoice])
+
+  const totalCreditExposure = currentCustomerBalance + netTotal
+  const isCreditLimitExceeded = customerCreditLimit > 0 && totalCreditExposure > customerCreditLimit
+  const excessCreditAmount = Math.max(0, totalCreditExposure - customerCreditLimit)
+
+  const handleRecordPayment = (inv: any) => {
+    const payload = {
+      customerId: inv.customerId,
+      invoiceId: inv.id,
+      amount: inv.amountDue ?? inv.totalAmount ?? 0
+    };
+    localStorage.setItem('ams_pending_customer_payment', JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent('ams_navigate', { detail: 'Sales & Customers.Customer Payments' }));
+  };
+
   const saveInvoice = async () => {
     if (!form.customerId) {
       notify('Please select a customer.')
       return
     }
+    if (form.dueDate && form.invoiceDate && form.dueDate < form.invoiceDate) {
+      notify('⚠️ Invoice Due Date cannot be earlier than the Invoice Date.')
+      return
+    }
+    if (isCreditLimitExceeded && !creditOverride) {
+      if (!window.confirm(`⚠️ Credit Limit Warning:\nCustomer's credit limit is ${money(customerCreditLimit, form.currencyCode)}.\nCurrent AR Balance is ${money(currentCustomerBalance, form.currencyCode)}.\nThis invoice of ${money(netTotal, form.currencyCode)} brings total exposure to ${money(totalCreditExposure, form.currencyCode)} (Exceeds credit limit by ${money(excessCreditAmount, form.currencyCode)}).\n\nDo you want to apply Manager Override and proceed?`)) {
+        return
+      }
+    }
+    const isGuid = (val?: string | null) => !!val && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(val)
+
     const body = {
-      ...form,
-      companyId: activeEntityId || null,
+      invoiceNumber: form.reference || null,
+      customerId: isGuid(form.customerId) ? form.customerId : form.customerId,
+      invoiceDate: form.invoiceDate || new Date().toISOString().slice(0, 10),
+      dueDate: form.dueDate || new Date().toISOString().slice(0, 10),
+      reference: form.reference || null,
+      notes: form.notes || null,
+      currencyCode: form.currencyCode || 'PKR',
+      companyId: isGuid(activeEntityId) ? activeEntityId : null,
       lines: lines.map(l => {
-        const qty = parseFloat(l.quantity || '1')
-        const price = parseFloat(l.unitPrice || '0')
+        const qty = parseFloat(l.quantity || '1') || 1
+        const price = parseFloat(l.unitPrice || '0') || 0
         const gross = qty * price
-        const dv = parseFloat(l.discountValue || '0')
+        const dv = parseFloat(l.discountValue || '0') || 0
         const dt = l.discountType || 0
         const discountAmount = dt === 0 ? (gross * dv) / 100 : Math.min(dv, gross)
         const taxable = Math.max(0, gross - discountAmount)
-        const tp = parseFloat(l.taxPercent || '0')
+        const tp = parseFloat(l.taxPercent || '0') || 0
         const taxAmount = (taxable * tp) / 100
         return {
-          productId: l.productId || null,
-          productName: l.productName || l.description || '',
-          description: l.description,
+          productId: isGuid(l.productId) ? l.productId : null,
+          description: l.description || l.productName || 'Item',
           quantity: qty,
           unitPrice: price,
-          discountType: dt,
-          discountValue: dv,
           discountAmount: discountAmount,
           taxCodeId: null,
-          taxPercent: tp,
-          taxAmount: taxAmount
+          taxAmount: taxAmount,
+          warehouseId: l.warehouseId || null
         }
       })
     }
@@ -302,6 +441,22 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
         notify('✓ Sales invoice created as Draft')
         // Clear pending number after successful save
         setPendingInvoiceNumber('')
+        const refMatch = String(body.reference || '').match(/INV-(\d+)/i)
+        if (refMatch) {
+          const num = parseInt(refMatch[1], 10)
+          if (!isNaN(num) && num < 100000) {
+            const cur = parseInt(localStorage.getItem('ams_last_used_inv_sequence') || '0', 10)
+            if (num > cur) {
+              localStorage.setItem('ams_last_used_inv_sequence', String(num))
+            }
+          }
+        }
+        if (convertedEstimateId) {
+          try {
+            await updateEstimateStatusStore(convertedEstimateId, '5')
+          } catch {}
+          setConvertedEstimateId(null)
+        }
       }
       clearDraft()
       setShowForm(false)
@@ -315,7 +470,7 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
   const downloadInvoicePdf = (inv: any) => {
     try {
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-      const invNum = inv.invoiceNumber || inv.reference || 'INV-00001'
+      const invNum = formatInvoiceNumber(inv.invoiceNumber || inv.reference || 'INV-00001')
       const compName = assignedCompany?.name || 'Muhammad Ali Enterprises'
       const statusText = typeof inv.status === 'number'
         ? ['Draft', 'Approved', 'Paid', 'Cancelled / Void', 'Partially Paid', 'Overdue'][inv.status] || 'Draft'
@@ -417,16 +572,26 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
         const price = parseFloat(l.unitPrice || l.price || l.unit_price || '0') || 0
         const gross = qty * price
         
-        // Calculate discount based on discountType (0=percentage, 1=fixed)
-        const dv = parseFloat(l.discountValue || l.discountAmount || l.discount || '0') || 0
-        const dt = l.discountType ?? 1
-        const discAmt = dt === 0 ? (gross * dv / 100) : Math.min(dv, gross)
+        // Calculate discount based on discountType (0=percentage, 1=fixed) or stored amount
+        const discAmt = (l.discountAmount !== undefined && l.discountAmount !== null && Number(l.discountAmount) > 0)
+          ? (parseFloat(l.discountAmount) || 0)
+          : (() => {
+              const dv = parseFloat(l.discountValue || l.discount || '0') || 0
+              const dt = l.discountType ?? 0
+              return dt === 0 ? (gross * dv / 100) : Math.min(dv, gross)
+            })()
         
-        // Calculate tax based on tax percentage
+        // Calculate tax based on tax percentage or stored amount
         const taxable = Math.max(0, gross - discAmt)
-        const tp = parseFloat(l.taxPercent || l.taxPercentage || l.taxRate || '0') || 0
-        const taxAmt = (taxable * tp) / 100
-        const total = taxable + taxAmt
+        const taxAmt = (l.taxAmount !== undefined && l.taxAmount !== null && Number(l.taxAmount) > 0)
+          ? (parseFloat(l.taxAmount) || 0)
+          : (() => {
+              const tp = parseFloat(l.taxPercent || l.taxPercentage || l.taxRate || '0') || 0
+              return (taxable * tp) / 100
+            })()
+        const total = (l.lineTotalWithTax !== undefined && l.lineTotalWithTax !== null)
+          ? Number(l.lineTotalWithTax)
+          : (taxable + taxAmt)
         
         const desc = l.description || l.itemDescription || l.desc || l.productName || l.itemName || l.name || 'Commercial Tax Invoice Items'
 
@@ -469,32 +634,41 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
       doc.setDrawColor(...tealMid)
       doc.line(totalsX, finalY + 8, totalsValX, finalY + 8)
 
-      // Compute totals from lines
-      const subTotal = lines.reduce((s: number, l: any) => {
-        const q = parseFloat(l.quantity || '1') || 1
-        const p = parseFloat(l.unitPrice || '0') || 0
-        return s + (q * p)
-      }, 0)
-      const discTotal = lines.reduce((s: number, l: any) => {
-        const q = parseFloat(l.quantity || '1') || 1
-        const p = parseFloat(l.unitPrice || '0') || 0
-        const gross = q * p
-        const dv = parseFloat(l.discountValue || l.discountAmount || '0') || 0
-        const dt = l.discountType ?? 1
-        return s + (dt === 0 ? (gross * dv / 100) : Math.min(dv, gross))
-      }, 0)
-      const taxTotal = lines.reduce((s: number, l: any) => {
-        const q = parseFloat(l.quantity || '1') || 1
-        const p = parseFloat(l.unitPrice || '0') || 0
-        const gross = q * p
-        const dv = parseFloat(l.discountValue || l.discountAmount || '0') || 0
-        const dt = l.discountType ?? 1
-        const da = dt === 0 ? (gross * dv / 100) : Math.min(dv, gross)
-        const taxable = Math.max(0, gross - da)
-        const tp = parseFloat(l.taxPercent || '0') || 0
-        return s + (taxable * tp) / 100
-      }, 0)
-      const netTotal = inv.totalAmount || (subTotal - discTotal + taxTotal)
+      // Canonical totals for PDF
+      const subTotal = inv.subTotal !== undefined && inv.subTotal !== null
+        ? Number(inv.subTotal)
+        : lines.reduce((s: number, l: any) => s + ((parseFloat(l.quantity) || 1) * (parseFloat(l.unitPrice) || 0)), 0)
+
+      const discTotal = inv.discountTotal !== undefined && inv.discountTotal !== null
+        ? Number(inv.discountTotal)
+        : lines.reduce((s: number, l: any) => {
+            if (l.discountAmount !== undefined && l.discountAmount !== null) return s + (parseFloat(l.discountAmount) || 0)
+            const q = parseFloat(l.quantity || '1') || 1
+            const p = parseFloat(l.unitPrice || '0') || 0
+            const gross = q * p
+            const dv = parseFloat(l.discountValue || '0') || 0
+            const dt = l.discountType ?? 0
+            return s + (dt === 0 ? (gross * dv / 100) : Math.min(dv, gross))
+          }, 0)
+
+      const taxTotal = inv.taxTotal !== undefined && inv.taxTotal !== null
+        ? Number(inv.taxTotal)
+        : lines.reduce((s: number, l: any) => {
+            if (l.taxAmount !== undefined && l.taxAmount !== null) return s + (parseFloat(l.taxAmount) || 0)
+            const q = parseFloat(l.quantity || '1') || 1
+            const p = parseFloat(l.unitPrice || '0') || 0
+            const gross = q * p
+            const da = l.discountAmount !== undefined && l.discountAmount !== null
+              ? (parseFloat(l.discountAmount) || 0)
+              : ((l.discountType ?? 0) === 0 ? (gross * (parseFloat(l.discountValue) || 0)) / 100 : Math.min(parseFloat(l.discountValue) || 0, gross))
+            const taxable = Math.max(0, gross - da)
+            const tp = parseFloat(l.taxPercent || '0') || 0
+            return s + (taxable * tp) / 100
+          }, 0)
+
+      const netTotal = inv.totalAmount !== undefined && inv.totalAmount !== null
+        ? Number(inv.totalAmount)
+        : (subTotal - discTotal + taxTotal)
 
       doc.setFontSize(9)
       doc.setFont('helvetica', 'normal')
@@ -599,41 +773,64 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
 
   const postInvoice = async () => {
     try {
-      if (postModal) {
-        const salesStore = useSalesStore.getState()
-        if ((salesStore as any).postInvoice) {
-          await (salesStore as any).postInvoice(postModal.id, {
-            arAccountId: postForm.arAccId || null,
-            revenueAccountId: postForm.revenueAccId || null,
-            taxLiabilityAccountId: postForm.taxLiabilityAccId || null
-          })
+      if (!postModal) return
+      // Deduct inventory for each line item
+      if (postModal.lines) {
+        for (const line of postModal.lines) {
+          const qty = parseFloat(line.quantity) || 0
+          if (qty > 0 && line.warehouseId) {
+            await createStockTransaction({
+              productId: line.productId,
+              warehouseId: line.warehouseId,
+              type: 'Out',
+              quantity: qty,
+              unitCost: parseFloat(line.unitPrice) || 0,
+              reference: `INV-${postModal.invoiceNumber || postModal.id}`,
+              entityId: activeEntityId
+            })
+          }
         }
       }
-      await useSalesStore.getState().fetchAllSales(activeEntityId)
-      notify('✓ Invoice posted to General Ledger!')
+      await postInvoiceStore(postModal.id, {
+        arAccountId: postForm.arAccId || null,
+        revenueAccountId: postForm.revenueAccId || null,
+        taxLiabilityAccountId: postForm.taxLiabilityAccId || null
+      })
+      notify(`✓ Invoice ${postModal.invoiceNumber || postModal.reference} approved, posted & inventory deducted!`)
       setPostModal(null)
-      fetchData()
+      await fetchData()
     } catch (e: any) {
       notify(e.message || 'Error posting invoice')
     }
   }
 
   const filteredInvoices = useMemo(() => {
-    return invoices.filter((inv: any) => {
-      const statusText = typeof inv.status === 'number'
-        ? ['Draft', 'Sent', 'Paid', 'Void', 'Partly Paid', 'Overdue'][inv.status] || ''
-        : String(inv.status || '')
+    return invoices
+      .filter((inv: any) => {
+        const statusText = typeof inv.status === 'number'
+          ? ['Draft', 'Sent', 'Paid', 'Void', 'Partly Paid', 'Overdue'][inv.status] || ''
+          : String(inv.status || '')
 
-      const matchesQuery = !query.trim()
-        ? true
-        : `${inv.invoiceNumber || ''} ${inv.customerName || ''} ${statusText}`
-            .toLowerCase()
-            .includes(query.toLowerCase())
+        const matchesQuery = !query.trim()
+          ? true
+          : `${inv.invoiceNumber || ''} ${inv.customerName || ''} ${statusText}`
+              .toLowerCase()
+              .includes(query.toLowerCase())
 
-      const matchesStatus = statusFilter === 'all' || statusText.toLowerCase() === statusFilter.toLowerCase()
+        const matchesStatus = statusFilter === 'all' || statusText.toLowerCase() === statusFilter.toLowerCase()
 
-      return matchesQuery && matchesStatus
-    })
+        return matchesQuery && matchesStatus
+      })
+      .sort((a: any, b: any) => {
+        const dateA = a.invoiceDate || a.date || ''
+        const dateB = b.invoiceDate || b.date || ''
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA)
+        }
+        const numA = a.invoiceNumber || a.reference || ''
+        const numB = b.invoiceNumber || b.reference || ''
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' })
+      })
   }, [invoices, query, statusFilter])
 
   const exportHeaders = ['Invoice #', 'Customer', 'Date', 'Due Date', 'Discount', 'Tax', 'Total', 'Due', 'Status']
@@ -651,15 +848,19 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
       : inv.status
   ])
 
-  const totalOutstanding = invoices
-    .filter((i: any) => i.status !== 2 && i.status !== 3)
-    .reduce((s: number, i: any) => s + (i.amountDue || 0), 0)
+  const isDraftInv = (i: any) => i.status === 0 || i.status === '0' || String(i.status).toLowerCase() === 'draft'
+  const isVoidInv = (i: any) => i.status === 3 || i.status === '3' || String(i.status).toLowerCase() === 'void' || String(i.status).toLowerCase() === 'cancelled'
+  const isPaidInv = (i: any) => i.status === 2 || i.status === '2' || String(i.status).toLowerCase() === 'paid'
 
-  const totalPaid = invoices
-    .filter((i: any) => i.status === 2)
-    .reduce((s: number, i: any) => s + (i.totalAmount || 0), 0)
+  const activeInvoices = invoices.filter((i: any) => !isDraftInv(i) && !isVoidInv(i))
+  const openInvoicesList = activeInvoices.filter((i: any) => !isPaidInv(i) && (i.amountDue ?? (i.totalAmount - (i.paidAmount || 0))) > 0)
 
-  const draftCount = invoices.filter((i: any) => i.status === 0).length
+  const totalOutstanding = openInvoicesList.reduce((s: number, i: any) => s + ((i.amountDue ?? (i.totalAmount - (i.paidAmount || 0))) || 0), 0)
+  const totalPaid = invoices.filter((i: any) => !isVoidInv(i)).reduce((s: number, i: any) => s + (Number(i.paidAmount || (isPaidInv(i) ? i.totalAmount : 0)) || 0), 0)
+  
+  const draftInvoicesList = invoices.filter((i: any) => isDraftInv(i))
+  const draftCount = draftInvoicesList.length
+  const draftTotalAmount = draftInvoicesList.reduce((s: number, i: any) => s + (Number(i.totalAmount) || 0), 0)
 
   const assignedCompany = entities.find(e => e.id === activeEntityId)
 
@@ -723,10 +924,10 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
       {/* Modern KPI Cards */}
       <KpiGrid cols={4}>
         {[
-          { label: 'Total Outstanding', value: money(totalOutstanding), desc: `${invoices.filter((i: any) => i.status !== 2 && i.status !== 3).length} open invoices`, icon: Coins, tone: 'blue' },
-          { label: 'Paid Collections', value: money(totalPaid), desc: `${invoices.filter((i: any) => i.status === 2).length} settled invoices`, icon: CheckCircle2, tone: 'emerald' },
-          { label: 'Draft Invoices', value: String(draftCount), desc: 'Ready for posting', icon: FileText, tone: 'amber' },
-          { label: 'Total Invoices', value: String(invoices.length), desc: 'All time records', icon: Receipt, tone: 'purple' },
+          { label: 'Total Outstanding', value: money(totalOutstanding), desc: `${openInvoicesList.length} approved receivables`, icon: Coins, tone: 'blue' },
+          { label: 'Paid Collections', value: money(totalPaid), desc: `${invoices.filter((i: any) => isPaidInv(i)).length} settled invoices`, icon: CheckCircle2, tone: 'emerald' },
+          { label: 'Draft Invoices', value: String(draftCount), desc: draftCount > 0 ? `${money(draftTotalAmount)} pending` : 'Ready for posting', icon: FileText, tone: 'amber' },
+          { label: 'Total Invoices', value: String(invoices.filter((i: any) => !isVoidInv(i)).length), desc: `${invoices.filter((i: any) => isVoidInv(i)).length} cancelled/void`, icon: Receipt, tone: 'purple' },
         ].map((kpi) => (
           <KpiCard key={kpi.label} {...kpi} />
         ))}
@@ -783,38 +984,57 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                   const badge = statusStyles[statusKey] || statusStyles.Draft
                   const lines: any[] = inv.lines || []
                   
-                  // Compute from lines if available, otherwise use API fields
-                  const grossAmount = lines.length > 0
-                    ? lines.reduce((s, l) => s + ((parseFloat(l.quantity) || 1) * (parseFloat(l.unitPrice) || 0)), 0)
-                    : (inv.subTotal ?? inv.grossAmount ?? inv.totalAmount ?? 0)
-                  // Compute discount amount from lines
-                  const discountAmount = lines.length > 0
-                    ? lines.reduce((s, l) => {
-                        const qty = parseFloat(l.quantity) || 1
-                        const price = parseFloat(l.unitPrice) || 0
-                        const gross = qty * price
-                        const dv = parseFloat(l.discountValue || l.discountAmount) || 0
-                        const dt = l.discountType ?? 1
-                        // dt=0 is percentage, dt=1 is fixed amount
-                        return s + (dt === 0 ? (gross * dv) / 100 : Math.min(dv, gross))
-                      }, 0)
-                    : (inv.discountTotal ?? 0)
-                  // Compute tax amount from lines (tax is always percentage)
-                  const taxAmount = lines.length > 0
-                    ? lines.reduce((s, l) => {
-                        const qty = parseFloat(l.quantity) || 1
-                        const price = parseFloat(l.unitPrice) || 0
-                        const gross = qty * price
-                        const dv = parseFloat(l.discountValue || l.discountAmount) || 0
-                        const dt = l.discountType ?? 1
-                        const da = dt === 0 ? (gross * dv) / 100 : Math.min(dv, gross)
-                        const taxable = Math.max(0, gross - da)
-                        const tp = parseFloat(l.taxPercent || l.taxAmount) || 0
-                        return s + (taxable * tp) / 100
-                      }, 0)
-                    : (inv.taxTotal ?? 0)
-                  const netTotal = inv.totalAmount ?? (grossAmount - discountAmount + taxAmount)
-                  const amountDue = inv.amountDue ?? (netTotal - (inv.paidAmount || inv.amountPaid || 0))
+                  // Canonical subtotal / gross
+                  const grossAmount = inv.subTotal !== undefined && inv.subTotal !== null
+                    ? Number(inv.subTotal)
+                    : (lines.length > 0
+                        ? lines.reduce((s, l) => s + ((parseFloat(l.quantity) || 1) * (parseFloat(l.unitPrice) || 0)), 0)
+                        : (inv.grossAmount ?? inv.totalAmount ?? 0))
+
+                  // Canonical discount
+                  const discountAmount = inv.discountTotal !== undefined && inv.discountTotal !== null
+                    ? Number(inv.discountTotal)
+                    : (lines.length > 0
+                        ? lines.reduce((s, l) => {
+                            if (l.discountAmount !== undefined && l.discountAmount !== null) {
+                              return s + (parseFloat(l.discountAmount) || 0)
+                            }
+                            const qty = parseFloat(l.quantity) || 1
+                            const price = parseFloat(l.unitPrice) || 0
+                            const gross = qty * price
+                            const dv = parseFloat(l.discountValue) || 0
+                            const dt = l.discountType ?? 0
+                            return s + (dt === 0 ? (gross * dv) / 100 : Math.min(dv, gross))
+                          }, 0)
+                        : 0)
+
+                  // Canonical tax
+                  const taxAmount = inv.taxTotal !== undefined && inv.taxTotal !== null
+                    ? Number(inv.taxTotal)
+                    : (lines.length > 0
+                        ? lines.reduce((s, l) => {
+                            if (l.taxAmount !== undefined && l.taxAmount !== null) {
+                              return s + (parseFloat(l.taxAmount) || 0)
+                            }
+                            const qty = parseFloat(l.quantity) || 1
+                            const price = parseFloat(l.unitPrice) || 0
+                            const gross = qty * price
+                            const da = l.discountAmount !== undefined && l.discountAmount !== null
+                              ? (parseFloat(l.discountAmount) || 0)
+                              : ((l.discountType ?? 0) === 0 ? (gross * (parseFloat(l.discountValue) || 0)) / 100 : Math.min(parseFloat(l.discountValue) || 0, gross))
+                            const taxable = Math.max(0, gross - da)
+                            const tp = parseFloat(l.taxPercent) || 0
+                            return s + (taxable * tp) / 100
+                          }, 0)
+                        : 0)
+
+                  const netTotal = inv.totalAmount !== undefined && inv.totalAmount !== null
+                    ? Number(inv.totalAmount)
+                    : (grossAmount - discountAmount + taxAmount)
+
+                  const amountDue = inv.amountDue !== undefined && inv.amountDue !== null
+                    ? Number(inv.amountDue)
+                    : (netTotal - (Number(inv.paidAmount || inv.amountPaid) || 0))
 
                   return (
                     <tr key={inv.id} className="hover:bg-[var(--color-surface-muted)]/30 transition-colors">
@@ -834,6 +1054,11 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                           {inv.status !== 3 && inv.status !== 'Void' && <button onClick={() => cancelInvoice(inv)} title="Cancel / Void Invoice" className="w-8 h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-rose-500/10 hover:border-rose-500/30 flex items-center justify-center transition-all"><Ban className="w-3.5 h-3.5 text-rose-500" /></button>}
                           {(inv.status === 0 || inv.status === 'Draft') && <button onClick={() => openPostModal(inv)} title="Approve & Post to Ledger" className="w-8 h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-emerald-500/10 hover:border-emerald-500/30 flex items-center justify-center transition-all"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /></button>}
                           {(inv.status === 0 || inv.status === 'Draft') && <button onClick={() => openEditModal(inv)} title="Edit Invoice" className="w-8 h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-blue-500/10 hover:border-blue-500/30 flex items-center justify-center transition-all"><Pencil className="w-3.5 h-3.5 text-blue-500" /></button>}
+                          {amountDue > 0 && inv.status !== 0 && inv.status !== 'Draft' && inv.status !== 3 && inv.status !== 'Void' && (
+                            <button onClick={() => handleRecordPayment(inv)} title="Record Customer Payment" className="w-8 h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-emerald-500/10 hover:border-emerald-500/30 flex items-center justify-center transition-all cursor-pointer">
+                              <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                            </button>
+                          )}
                           <button onClick={() => { openEditModal(inv); setModalTab('preview'); }} title="View Invoice" className="w-8 h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-indigo-500/10 hover:border-indigo-500/30 flex items-center justify-center transition-all"><Eye className="w-3.5 h-3.5 text-indigo-500" /></button>
                         </div>
                       </td>
@@ -862,132 +1087,165 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
               <button onClick={handleCancelForm} className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)] hover:bg-[var(--color-surface-muted)] transition-colors"><X className="w-4 h-4" /></button>
             </div>
 
-            {/* Modal Tabs */}
-            <div className="flex items-center gap-1 px-4 pt-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+            {/* Modal Stepper Navigation */}
+            <div className="erp-stepper-nav">
               <button
                 type="button"
                 onClick={() => setModalTab('details')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'details'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'details' ? 'active' : ''}`}
               >
-                <Users className="w-3 h-3" /> 1. Customer & Terms
+                <span className="erp-step-num">1</span>
+                <Users className="w-3.5 h-3.5" />
+                <span>Customer & Details</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setModalTab('lines')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'lines'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'lines' ? 'active' : ''}`}
               >
-                <Receipt className="w-3 h-3" /> 2. Invoice Line Items ({lines.length})
+                <span className="erp-step-num">2</span>
+                <Receipt className="w-3.5 h-3.5" />
+                <span>Line Items ({lines.length})</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setModalTab('summary')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'summary'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'summary' ? 'active' : ''}`}
               >
-                <Coins className="w-3 h-3" /> 3. Summary & Posting
+                <span className="erp-step-num">3</span>
+                <Coins className="w-3.5 h-3.5" />
+                <span>Summary & Posting</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setModalTab('preview')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'preview'
-                    ? 'border-emerald-600 text-emerald-600 bg-emerald-500/10'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'preview' ? 'active' : ''}`}
               >
-                <Eye className="w-3 h-3" /> Preview
+                <span className="erp-step-num">4</span>
+                <Eye className="w-3.5 h-3.5" />
+                <span>Review & Preview</span>
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 space-y-5">
+            <div className="p-6 md:p-8 overflow-y-auto flex-1 space-y-6">
               {modalTab === 'details' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      <span className="text-rose-500 font-bold mr-1">*</span> Customer Account
-                    </label>
-                    <select
-                      value={form.customerId}
-                      onChange={e => setForm({ ...form, customerId: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      <option value="">Select a customer...</option>
-                      {customers.map((c: any) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} {c.customerNumber ? `(${c.customerNumber})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Invoice Reference # / Code
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Hash className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        placeholder="e.g. INV-0001"
-                        value={form.reference}
-                        onChange={e => setForm({ ...form, reference: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent font-mono text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
+                <div className="space-y-5">
+                  <div className="erp-form-card space-y-4">
+                    <div className="border-b border-[var(--color-border)] pb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-sky-500" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-strong)]">Invoice Header & Terms</h4>
+                      </div>
+                      <span className="text-[11px] text-[var(--color-text-muted)] font-medium">Step 1 of 4</span>
                     </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Default Currency
-                    </label>
-                    <select
-                      value={form.currencyCode}
-                      onChange={e => setForm({ ...form, currencyCode: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      {['PKR', 'USD', 'AED', 'SAR', 'GBP', 'EUR', 'CAD', 'AUD'].map(curr => (
-                        <option key={curr} value={curr}>{curr}</option>
-                      ))}
-                    </select>
-                  </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="md:col-span-2">
+                        <label className="erp-form-label">
+                          <span className="text-rose-500 font-bold mr-1">*</span> Customer Account
+                        </label>
+                        <CompactSelect
+                          value={form.customerId}
+                          onChange={v => setForm({ ...form, customerId: v })}
+                          placeholder="Select a customer..."
+                          searchPlaceholder="Search customer by name or code..."
+                          options={customers.map((c: any) => ({
+                            value: c.id,
+                            label: c.name,
+                            badge: c.customerNumber || undefined,
+                            sublabel: c.creditLimit ? `Limit: ${money(c.creditLimit, c.currencyCode || form.currencyCode)}` : undefined,
+                          }))}
+                          className="h-10 text-xs font-semibold"
+                        />
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Invoice Date
-                    </label>
-                    <input
-                      type="date"
-                      value={form.invoiceDate}
-                      onChange={e => setForm({ ...form, invoiceDate: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    />
-                  </div>
+                        {selectedCustomer && (
+                          <div className={`mt-3 p-4 rounded-xl border text-xs transition-all ${
+                            isCreditLimitExceeded
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
+                              : customerCreditLimit > 0
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
+                              : 'bg-[var(--color-surface-muted)]/50 border-[var(--color-border)] text-[var(--color-text-muted)]'
+                          }`}>
+                            <div className="flex items-center justify-between font-bold">
+                              <span className="flex items-center gap-1.5">
+                                {isCreditLimitExceeded ? '⚠️ Credit Limit Warning' : customerCreditLimit > 0 ? '✓ Credit Policy Verified' : 'ℹ️ Customer Terms'}
+                              </span>
+                              <span className="font-mono">
+                                Limit: {customerCreditLimit > 0 ? money(customerCreditLimit, form.currencyCode) : 'Unlimited'}
+                              </span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center justify-between text-[11px] gap-2">
+                              <span>Outstanding AR: <strong>{money(currentCustomerBalance, form.currencyCode)}</strong></span>
+                              <span>This Invoice Total: <strong>{money(netTotal, form.currencyCode)}</strong></span>
+                              <span>Post-Invoice Exposure: <strong className={isCreditLimitExceeded ? 'text-rose-600 dark:text-rose-400 font-mono font-bold' : 'font-mono'}>{money(totalCreditExposure, form.currencyCode)}</strong></span>
+                            </div>
+                            {isCreditLimitExceeded && (
+                              <p className="mt-2 text-[11px] font-semibold text-rose-600 dark:text-rose-300">
+                                ⚠️ This invoice exceeds the customer's credit limit by <strong>{money(excessCreditAmount, form.currencyCode)}</strong>.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Payment Due Date
-                    </label>
-                    <input
-                      type="date"
-                      value={form.dueDate}
-                      onChange={e => setForm({ ...form, dueDate: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    />
+                      <div>
+                        <label className="erp-form-label">
+                          Invoice Reference #
+                        </label>
+                        <div className="relative">
+                          <Hash className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            placeholder="e.g. INV-0001 (Auto-generated)"
+                            value={form.reference}
+                            onChange={e => setForm({ ...form, reference: e.target.value })}
+                            className="erp-form-input pl-10! font-mono font-bold"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">
+                          Billing Currency
+                        </label>
+                        <select
+                          value={form.currencyCode}
+                          onChange={e => setForm({ ...form, currencyCode: e.target.value })}
+                          className="erp-form-select font-bold"
+                        >
+                          {['PKR', 'USD', 'AED', 'SAR', 'GBP', 'EUR', 'CAD', 'AUD'].map(curr => (
+                            <option key={curr} value={curr}>{curr}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">
+                          Invoice Date
+                        </label>
+                        <input
+                          type="date"
+                          value={form.invoiceDate}
+                          onChange={e => setForm({ ...form, invoiceDate: e.target.value })}
+                          className="erp-form-input font-medium"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">
+                          Payment Due Date
+                        </label>
+                        <input
+                          type="date"
+                          value={form.dueDate}
+                          onChange={e => setForm({ ...form, dueDate: e.target.value })}
+                          className="erp-form-input font-medium"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -999,16 +1257,17 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                   </div>
 
                   <div className="border border-[var(--color-border)] rounded-xl overflow-hidden shadow-2xs">
-                    <table className="w-full text-xs">
+                    <table className="w-full text-xs min-w-[950px]">
                       <thead className="bg-[var(--color-surface-muted)] text-[var(--color-text-muted)] font-semibold border-b border-[var(--color-border)]">
                         <tr>
-                          <th className="p-2.5 text-left w-[200px]">Product / Service</th>
-                          <th className="p-2.5 text-left">Description</th>
-                          <th className="p-2.5 text-right w-16">Qty</th>
-                          <th className="p-2.5 text-right w-24">Price</th>
-                          <th className="p-2.5 text-center w-36">Discount</th>
-                          <th className="p-2.5 text-right w-16">Tax %</th>
-                          <th className="p-2.5 text-right w-24">Total</th>
+                          <th className="p-2.5 text-left w-[170px] min-w-[140px]">Product / Service</th>
+                          <th className="p-2.5 text-left min-w-[180px]">Description</th>
+                          <th className="p-2.5 text-left w-[140px] min-w-[120px]">Warehouse</th>
+                          <th className="p-2.5 text-right w-16 min-w-[55px]">Qty</th>
+                          <th className="p-2.5 text-right w-36 min-w-[130px]">Price</th>
+                          <th className="p-2.5 text-center w-40 min-w-[145px]">Discount</th>
+                          <th className="p-2.5 text-center w-20 min-w-[70px]">Tax</th>
+                          <th className="p-2.5 text-right w-24 min-w-[85px]">Total</th>
                           <th className="p-2.5 w-8"></th>
                         </tr>
                       </thead>
@@ -1016,31 +1275,38 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                         {lines.map((l, i) => (
                           <tr key={i} className="hover:bg-[var(--color-surface-muted)]/50">
                             <td className="p-2">
-                              <select
+                              <CompactProductSelect
                                 value={l.productId}
-                                onChange={e => updateLine(i, 'productId', e.target.value)}
+                                onChange={v => updateLine(i, 'productId', v)}
+                                products={products}
+                                filterPurpose={['FinishedGood', 'Service']}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <textarea
+                                placeholder="Item description / details..."
+                                value={l.description}
+                                onChange={e => updateLine(i, 'description', e.target.value)}
+                                rows={2}
+                                className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] outline-none resize-none"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <select
+                                value={l.warehouseId}
+                                onChange={e => updateLine(i, 'warehouseId', e.target.value)}
                                 className="w-full h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] outline-none"
                               >
-                                <option value="">Select Item...</option>
-                                {products.map((p: any) => (
-                                  <option key={p.id} value={p.id}>
-                                    {p.name}
-                                  </option>
+                                <option value="">Select...</option>
+                                {warehouses.map((w: any) => (
+                                  <option key={w.id} value={w.id}>{w.name}</option>
                                 ))}
                               </select>
                             </td>
                             <td className="p-2">
-                              <textarea
-                                placeholder="Description"
-                                value={l.description}
-                                onChange={e => updateLine(i, 'description', e.target.value)}
-                                rows={2}
-                                className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] outline-none resize-none"
-                              />
-                            </td>
-                            <td className="p-2">
                               <input
                                 type="number"
+                                min="1"
                                 value={l.quantity}
                                 onChange={e => updateLine(i, 'quantity', e.target.value)}
                                 className="w-full h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-right font-mono text-[var(--color-text-strong)] outline-none"
@@ -1056,33 +1322,27 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                               />
                             </td>
                             <td className="p-2">
-                              <div className="flex items-center gap-1">
-                                <select
+                              <div className="flex items-center gap-1.5 min-w-[130px]">
+                                <CompactDiscountTypeSelect
                                   value={l.discountType}
-                                  onChange={e => updateLine(i, 'discountType', e.target.value)}
-                                  className="h-8 w-12 shrink-0 border border-[var(--color-border)] rounded-lg px-1 text-xs bg-[var(--color-surface)] outline-none"
-                                >
-                                  <option value={0}>%</option>
-                                  <option value={1}>{form.currencyCode}</option>
-                                </select>
+                                  onChange={val => updateLine(i, 'discountType', val)}
+                                  currencyCode={form.currencyCode}
+                                />
                                 <input
                                   type="number"
                                   min="0"
                                   step={l.discountType === 0 ? "1" : "0.01"}
                                   value={l.discountValue}
                                   onChange={e => updateLine(i, 'discountValue', e.target.value)}
-                                  className="w-full h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-right font-mono text-[var(--color-text-strong)] outline-none"
+                                  className="w-full min-w-[65px] h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-right font-mono text-[var(--color-text-strong)] outline-none"
                                 />
                               </div>
                             </td>
                             <td className="p-2">
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
+                              <CompactTaxSelect
                                 value={l.taxPercent}
-                                onChange={e => updateLine(i, 'taxPercent', e.target.value)}
-                                className="w-full h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-right font-mono text-[var(--color-text-strong)] outline-none"
+                                onChange={v => updateLine(i, 'taxPercent', v)}
+                                taxCodes={applicableTaxCodes}
                               />
                             </td>
                             <td className="p-2 text-right font-mono font-semibold text-[var(--color-text-strong)]">
@@ -1134,6 +1394,26 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                       <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
                       <span>Saving as Draft creates the audit record. You can post to the GL at any time.</span>
                     </div>
+
+                    {isCreditLimitExceeded && (
+                      <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs space-y-2">
+                        <div className="font-bold flex items-center gap-1.5 text-amber-900 dark:text-amber-200">
+                          <span>⚠️ Manager Credit Override Required</span>
+                        </div>
+                        <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                          Customer limit is <strong>{money(customerCreditLimit, form.currencyCode)}</strong>. Total exposure will be <strong>{money(totalCreditExposure, form.currencyCode)}</strong> (Exceeds by <strong>{money(excessCreditAmount, form.currencyCode)}</strong>).
+                        </p>
+                        <label className="flex items-center gap-2 pt-1 cursor-pointer font-semibold text-rose-600 dark:text-rose-400">
+                          <input
+                            type="checkbox"
+                            checked={creditOverride}
+                            onChange={e => setCreditOverride(e.target.checked)}
+                            className="rounded border-amber-500 text-amber-600 focus:ring-amber-500 w-4 h-4"
+                          />
+                          <span>Acknowledge & Authorize Credit Limit Override</span>
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   <div className="bg-[var(--color-surface-muted)]/60 border border-[var(--color-border)] rounded-xl p-4 space-y-3">
@@ -1254,23 +1534,14 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                 <span>{modalTab === 'preview' ? 'Ready for final verification & creation' : 'Auto-draft protection active'}</span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
                 <button
                   type="button"
-                  className="h-8.5 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors"
+                  className="h-9 min-h-[36px] px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors whitespace-nowrap leading-none flex items-center justify-center shrink-0"
                   onClick={handleCancelForm}
                 >
                   Cancel
                 </button>
-                {modalTab !== 'preview' && (
-                  <button
-                    type="button"
-                    className="h-8.5 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)] transition-colors"
-                    onClick={(e) => { e.preventDefault(); saveDraft(); notify('Invoice draft saved locally.'); }}
-                  >
-                    Save Draft
-                  </button>
-                )}
 
                 {modalTab !== 'details' && (
                   <button
@@ -1280,9 +1551,9 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                       else if (modalTab === 'summary') setModalTab('lines')
                       else if (modalTab === 'lines') setModalTab('details')
                     }}
-                    className="h-8.5 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors flex items-center gap-1"
+                    className="h-9 min-h-[36px] px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap leading-none shrink-0"
                   >
-                    <ArrowLeft className="w-3 h-3" />
+                    <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
                     <span>{modalTab === 'preview' ? 'Back to Edit' : 'Back'}</span>
                   </button>
                 )}
@@ -1303,20 +1574,20 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
                         setModalTab('preview')
                       }
                     }}
-                    className="primary h-8.5 px-4 rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5"
+                    className="h-9 min-h-[36px] px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap leading-none shrink-0"
                   >
                     <span>
-                      {modalTab === 'details' ? 'Next: Line Items' : modalTab === 'lines' ? 'Next: Summary & Posting' : 'Preview & Review'}
+                      {modalTab === 'details' ? 'Next: Line Items' : modalTab === 'lines' ? 'Next: Summary & Posting' : 'Preview Invoice'}
                     </span>
-                    {modalTab === 'summary' ? <Eye className="w-3 h-3" /> : <ArrowRight className="w-3 h-3" />}
+                    {modalTab === 'summary' ? <Eye className="w-3.5 h-3.5 shrink-0" /> : <ArrowRight className="w-3.5 h-3.5 shrink-0" />}
                   </button>
                 ) : (
                   <button
                     type="button"
                     onClick={saveInvoice}
-                    className="primary h-8.5 px-5 rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    className="h-9 min-h-[36px] px-5 rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white whitespace-nowrap leading-none shrink-0"
                   >
-                    <Check className="w-3 h-3" />
+                    <Check className="w-3.5 h-3.5 shrink-0" />
                     <span>{editingInvoice ? 'Confirm & Save Changes' : 'Confirm & Create Invoice (Draft)'}</span>
                   </button>
                 )}
@@ -1332,48 +1603,59 @@ export const SalesWorkspace: React.FC<{ activeEntityId: string; entities?: any[]
           <div className="w-full max-w-lg bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl p-6 space-y-4">
             <h3 className="text-base font-bold text-[var(--color-text-strong)] tracking-tight">Post Invoice to Ledger</h3>
             <div className="bg-sky-500/10 border border-sky-500/20 rounded-xl p-3.5 text-xs">
-              <p className="font-semibold text-[var(--color-text-strong)]">{postModal.invoiceNumber} — {postModal.customerName}</p>
-              <p className="text-[var(--color-text-muted)] mt-1">Total Amount: <strong className="text-sky-600 font-mono">{money(postModal.totalAmount)}</strong></p>
+              <p className="font-semibold text-[var(--color-text-strong)]">{formatInvoiceNumber(postModal?.invoiceNumber || postModal?.reference)} — {postModal?.customerName || 'Customer'}</p>
+              <p className="text-[var(--color-text-muted)] mt-1">Total Amount: <strong className="text-sky-600 font-mono">{money(postModal?.totalAmount || 0)}</strong></p>
               <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
                 Posting generates GAAP double entries: <strong>Dr Accounts Receivable</strong> and <strong>Cr Revenue / Sales Tax</strong>.
               </p>
             </div>
             <div>
               <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                <span className="text-rose-500 font-bold mr-1">*</span> Accounts Receivable Account
+                Accounts Receivable Account
               </label>
-              <select
+              <CompactSelect
                 value={postForm.arAccId}
-                onChange={e => setPostForm({ ...postForm, arAccId: e.target.value })}
-                className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] outline-none"
-              >
-                <option value="">Select AR Account...</option>
-                {accounts.filter((a: any) => a.type === 'Asset').map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
-                ))}
-              </select>
+                onChange={v => setPostForm({ ...postForm, arAccId: v })}
+                placeholder="Default (Customer Receivables 12000)"
+                searchPlaceholder="Search AR account..."
+                clearLabel="Default (Customer Receivables 12000)"
+                options={((Array.isArray(accounts) ? accounts : []).filter((a: any) => a && (a.type === 'Asset' || a.type === 0 || String(a.type).toLowerCase() === 'asset' || a.code?.startsWith('1'))).length > 0
+                  ? (Array.isArray(accounts) ? accounts : []).filter((a: any) => a && (a.type === 'Asset' || a.type === 0 || String(a.type).toLowerCase() === 'asset' || a.code?.startsWith('1')))
+                  : (Array.isArray(accounts) ? accounts : [])
+                ).map((a: any) => ({
+                  value: a?.id,
+                  label: `${a?.code} — ${a?.name}`,
+                  badge: 'Asset'
+                }))}
+                className="h-10 text-xs"
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                <span className="text-rose-500 font-bold mr-1">*</span> Revenue Account
+                Revenue Account
               </label>
-              <select
+              <CompactSelect
                 value={postForm.revenueAccId}
-                onChange={e => setPostForm({ ...postForm, revenueAccId: e.target.value })}
-                className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] outline-none"
-              >
-                <option value="">Select Revenue Account...</option>
-                {accounts.filter((a: any) => a.type === 'Revenue').map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
-                ))}
-              </select>
+                onChange={v => setPostForm({ ...postForm, revenueAccId: v })}
+                placeholder="Default (Sales Revenue 41100)"
+                searchPlaceholder="Search Revenue account..."
+                clearLabel="Default (Sales Revenue 41100)"
+                options={((Array.isArray(accounts) ? accounts : []).filter((a: any) => a && (a.type === 'Revenue' || a.type === 3 || String(a.type).toLowerCase() === 'revenue' || a.code?.startsWith('4'))).length > 0
+                  ? (Array.isArray(accounts) ? accounts : []).filter((a: any) => a && (a.type === 'Revenue' || a.type === 3 || String(a.type).toLowerCase() === 'revenue' || a.code?.startsWith('4')))
+                  : (Array.isArray(accounts) ? accounts : [])
+                ).map((a: any) => ({
+                  value: a?.id,
+                  label: `${a?.code} — ${a?.name}`,
+                  badge: 'Revenue'
+                }))}
+                className="h-10 text-xs"
+              />
             </div>
             <div className="flex gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={postInvoice}
-                disabled={!postForm.arAccId || !postForm.revenueAccId}
-                className="flex-1 h-8.5 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold text-xs transition-colors"
+                className="flex-1 h-8.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs transition-colors"
               >
                 Post to Ledger
               </button>

@@ -70,6 +70,7 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
   const [selectedEntityFilter, setSelectedEntityFilter] = useState<string>('all');
   const [showZeroBalances, setShowZeroBalances] = useState(false);
   const [cashFlowMethod, setCashFlowMethod] = useState<'indirect' | 'direct'>('indirect');
+  const [tbFilterMode, setTbFilterMode] = useState<'active_only' | 'all_postings'>('active_only');
 
   useEffect(() => {
     fetchAccounts();
@@ -122,6 +123,29 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
   };
 
   // ── 1. Central Double-Entry Ledger Calculation Engine (IAS 1 / GAAP) ───────────
+  const isAccountNormalDebit = (type: string, normalBalance?: string): boolean => {
+    if (normalBalance) {
+      return normalBalance.toLowerCase() === 'debit';
+    }
+    const t = String(type).trim();
+    switch (t) {
+      case 'Asset':
+      case 'Expense':
+      case 'ContraLiability':
+      case 'ContraEquity':
+      case 'ContraRevenue':
+        return true;
+      case 'Liability':
+      case 'Equity':
+      case 'Revenue':
+      case 'ContraAsset':
+      case 'ContraExpense':
+        return false;
+      default:
+        return t.toLowerCase().includes('asset') || t.toLowerCase().includes('expense');
+    }
+  };
+
   const ledgerState = useMemo(() => {
     const openingBalances: Record<string, number> = {};
     const periodDebits: Record<string, number> = {};
@@ -134,15 +158,32 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
       periodCredits[a.id] = 0;
     });
 
-    const isNormalDebit = (type: string) => {
-      const t = String(type).toLowerCase();
-      return t === 'asset' || t === 'expense' || t.includes('contra');
-    };
+    // Build set of cancelled / reversed references (e.g. "REV-INV-00001" and "INV-00001")
+    const reversedRefs = new Set<string>();
+    entries.forEach(e => {
+      if (e.reference?.startsWith('REV-')) {
+        reversedRefs.add(e.reference.substring(4));
+        reversedRefs.add(e.reference);
+      }
+      const statusStr = String(e.status || '').toLowerCase();
+      if (statusStr === 'reversed' || statusStr === '4' || statusStr === 'cancelled' || statusStr === '5') {
+        if (e.reference) {
+          reversedRefs.add(e.reference);
+          reversedRefs.add(`REV-${e.reference}`);
+        }
+      }
+    });
 
     const postedEntries = entries.filter(e => {
       const statusStr = String(e.status || '').toLowerCase();
-      const isPosted = statusStr === 'posted' || statusStr === '3' || !e.status;
+      // Include both Posted (3) and Reversed (4) entries so GAAP/IAS reversals properly offset original entries
+      const isPosted = statusStr === 'posted' || statusStr === '3' || statusStr === 'reversed' || statusStr === '4';
       if (!isPosted) return false;
+
+      // Clean Active Postings Only: In active_only mode, completely exclude cancelled/reversed pairs
+      if (tbFilterMode === 'active_only' && e.reference && reversedRefs.has(e.reference)) {
+        return false;
+      }
 
       const compId = (e as any).companyId;
       if (activeCompanyId && activeCompanyId !== 'all' && compId && compId !== activeCompanyId) {
@@ -158,7 +199,7 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
 
       if (isAfterPeriod) return;
 
-      entry.lines.forEach(line => {
+      entry.lines?.forEach(line => {
         const acc = accounts.find(a => a.id === line.accountId);
         if (!acc) return;
 
@@ -166,7 +207,7 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
         const cr = Number(line.credit) || 0;
 
         if (isPriorToPeriod) {
-          if (isNormalDebit(acc.type)) {
+          if (isAccountNormalDebit(acc.type, acc.normalBalance)) {
             openingBalances[acc.id] = (openingBalances[acc.id] || 0) + (dr - cr);
           } else {
             openingBalances[acc.id] = (openingBalances[acc.id] || 0) + (cr - dr);
@@ -183,7 +224,7 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
       const dr = periodDebits[a.id] || 0;
       const cr = periodCredits[a.id] || 0;
 
-      if (isNormalDebit(a.type)) {
+      if (isAccountNormalDebit(a.type, a.normalBalance)) {
         closingBalances[a.id] = open + (dr - cr);
       } else {
         closingBalances[a.id] = open + (cr - dr);
@@ -196,13 +237,14 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
       periodCredits,
       closingBalances
     };
-  }, [accounts, entries, activeCompanyId, dateFrom, dateTo]);
+  }, [accounts, entries, activeCompanyId, dateFrom, dateTo, tbFilterMode]);
 
-  // ── 2. Helper: Leaf-Only Filter ───────────────────────────────────────────
+  // ── 2. Helper: Active Posting Accounts ──────────────────────────────────────
   const isLeafAccount = (a: Account) => {
-    if (a.isPosting === false) return false;
-    const hasChildren = accounts.some(other => other.parentId === a.id);
-    if (hasChildren) return false;
+    if (a.isPosting === false) {
+      const hasChildren = accounts.some(other => other.parentId === a.id);
+      if (hasChildren) return false;
+    }
     return true;
   };
 
@@ -210,90 +252,227 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
   const balanceSheet = useMemo(() => {
     const postingAccounts = accounts.filter(isLeafAccount);
 
-    // Current Assets Groups
-    const cashBankAccounts = postingAccounts.filter(a => a.code.startsWith('111') || a.code.startsWith('112') || a.name.toLowerCase().includes('cash') || a.name.toLowerCase().includes('bank'));
-    const arAccounts = postingAccounts.filter(a => a.code.startsWith('12') || a.name.toLowerCase().includes('receivable'));
-    const invAccounts = postingAccounts.filter(a => a.code.startsWith('13') || a.name.toLowerCase().includes('inventory') || a.name.toLowerCase().includes('stock'));
-    const prepaidAccounts = postingAccounts.filter(a => a.code.startsWith('14') || a.name.toLowerCase().includes('prepaid') || a.name.toLowerCase().includes('advance'));
-    const otherCurrentAssets = postingAccounts.filter(a => String(a.type).toLowerCase() === 'asset' && !cashBankAccounts.includes(a) && !arAccounts.includes(a) && !invAccounts.includes(a) && !prepaidAccounts.includes(a) && !a.code.startsWith('15'));
+    const isCurrentAsset = (a: Account) => {
+      const t = a.type.toLowerCase();
+      if (!t.includes('asset')) return false;
+      const sub = (a.subtype || '').toLowerCase();
+      if (sub.includes('current') && !sub.includes('non')) return true;
+      if (sub.includes('non-current')) return false;
+      const num = parseInt(a.code, 10);
+      if (!isNaN(num)) return num < 15000;
+      return !a.code.startsWith('15');
+    };
 
-    // Non-Current Assets Groups
-    const ppeAccounts = postingAccounts.filter(a => (a.code.startsWith('15') || a.name.toLowerCase().includes('equipment') || a.name.toLowerCase().includes('machinery') || a.name.toLowerCase().includes('furniture') || a.name.toLowerCase().includes('building') || a.name.toLowerCase().includes('vehicle')) && !a.name.toLowerCase().includes('lease'));
-    const rouLeaseAccounts = postingAccounts.filter(a => a.code.startsWith('15') && (a.name.toLowerCase().includes('lease') || a.name.toLowerCase().includes('right of use') || a.name.toLowerCase().includes('rou')));
-    const otherNonCurrentAssets = postingAccounts.filter(a => String(a.type).toLowerCase() === 'asset' && a.code.startsWith('1') && !cashBankAccounts.includes(a) && !arAccounts.includes(a) && !invAccounts.includes(a) && !prepaidAccounts.includes(a) && !otherCurrentAssets.includes(a) && !ppeAccounts.includes(a) && !rouLeaseAccounts.includes(a));
+    const isNonCurrentAsset = (a: Account) => {
+      const t = a.type.toLowerCase();
+      if (!t.includes('asset')) return false;
+      return !isCurrentAsset(a);
+    };
 
-    const sumList = (list: Account[]) => list.reduce((sum, a) => {
+    const currentAssetAccounts = postingAccounts.filter(isCurrentAsset);
+    const nonCurrentAssetAccounts = postingAccounts.filter(isNonCurrentAsset);
+
+    // Current Assets Groups (IAS 1.66)
+    const cashBankAccounts = currentAssetAccounts.filter(a => 
+      a.code.startsWith('111') || a.code.startsWith('112') || 
+      a.name.toLowerCase().includes('cash') || a.name.toLowerCase().includes('bank')
+    );
+    const arAccounts = currentAssetAccounts.filter(a => 
+      !cashBankAccounts.includes(a) && a.code !== '12200' && a.code !== '12300' && (
+        a.code.startsWith('12') || a.name.toLowerCase().includes('receivable') || a.name.toLowerCase().includes('doubtful')
+      )
+    );
+    const invAccounts = currentAssetAccounts.filter(a => 
+      !cashBankAccounts.includes(a) && !arAccounts.includes(a) && (
+        a.code.startsWith('13') || a.name.toLowerCase().includes('inventory') || a.name.toLowerCase().includes('stock')
+      )
+    );
+    const prepaidAccounts = currentAssetAccounts.filter(a => 
+      !cashBankAccounts.includes(a) && !arAccounts.includes(a) && !invAccounts.includes(a) && (
+        a.code.startsWith('140') || a.name.toLowerCase().includes('prepaid') || a.name.toLowerCase().includes('advance')
+      )
+    );
+    const taxRecoverableAccounts = currentAssetAccounts.filter(a => 
+      !cashBankAccounts.includes(a) && !arAccounts.includes(a) && !invAccounts.includes(a) && !prepaidAccounts.includes(a) && (
+        a.code.startsWith('141') || a.name.toLowerCase().includes('input vat') || a.name.toLowerCase().includes('tax clearing') || a.name.toLowerCase().includes('wht receivable')
+      )
+    );
+    const otherCurrentAssets = currentAssetAccounts.filter(a => 
+      !cashBankAccounts.includes(a) && !arAccounts.includes(a) && !invAccounts.includes(a) && !prepaidAccounts.includes(a) && !taxRecoverableAccounts.includes(a)
+    );
+
+    // Non-Current Assets Groups (IAS 1.66 & IAS 16 & IFRS 16)
+    const rouLeaseAccounts = nonCurrentAssetAccounts.filter(a => 
+      a.name.toLowerCase().includes('lease') || a.name.toLowerCase().includes('right of use') || a.name.toLowerCase().includes('rou')
+    );
+    const deferredTaxAssetAccounts = nonCurrentAssetAccounts.filter(a => 
+      !rouLeaseAccounts.includes(a) && (a.code.startsWith('153') || a.name.toLowerCase().includes('deferred tax'))
+    );
+    const ppeAccounts = nonCurrentAssetAccounts.filter(a => 
+      !rouLeaseAccounts.includes(a) && !deferredTaxAssetAccounts.includes(a) && (
+        a.code.startsWith('151') || a.code.startsWith('152') || a.name.toLowerCase().includes('equipment') || 
+        a.name.toLowerCase().includes('machinery') || a.name.toLowerCase().includes('furniture') || 
+        a.name.toLowerCase().includes('building') || a.name.toLowerCase().includes('vehicle') || 
+        a.name.toLowerCase().includes('fixed asset') || a.name.toLowerCase().includes('depreciation')
+      )
+    );
+    const otherNonCurrentAssets = nonCurrentAssetAccounts.filter(a => 
+      !rouLeaseAccounts.includes(a) && !deferredTaxAssetAccounts.includes(a) && !ppeAccounts.includes(a)
+    );
+
+    // Calculate Asset balances (ContraAsset is deducted)
+    const sumAssetList = (list: Account[]) => list.reduce((sum, a) => {
       const bal = ledgerState.closingBalances[a.id] || 0;
-      return sum + (String(a.type).toLowerCase() === 'contraasset' || a.name.toLowerCase().includes('allowance') || a.name.toLowerCase().includes('accumulated') ? (bal > 0 ? -bal : bal) : bal);
+      return sum + (a.type === 'ContraAsset' ? -bal : bal);
     }, 0);
 
-    const cashBankTotal = sumList(cashBankAccounts);
-    const arTotal = sumList(arAccounts);
-    const invTotal = sumList(invAccounts);
-    const prepaidTotal = sumList(prepaidAccounts);
-    const otherCurrentTotal = sumList(otherCurrentAssets);
+    const cashBankTotal = sumAssetList(cashBankAccounts);
+    const arTotal = sumAssetList(arAccounts);
+    const invTotal = sumAssetList(invAccounts);
+    const prepaidTotal = sumAssetList(prepaidAccounts);
+    const taxRecoverableTotal = sumAssetList(taxRecoverableAccounts);
+    const otherCurrentTotal = sumAssetList(otherCurrentAssets);
+    const totalCurrentAssets = cashBankTotal + arTotal + invTotal + prepaidTotal + taxRecoverableTotal + otherCurrentTotal;
 
-    const totalCurrentAssets = cashBankTotal + arTotal + invTotal + prepaidTotal + otherCurrentTotal;
+    const ppeTotal = sumAssetList(ppeAccounts);
+    const rouLeaseTotal = sumAssetList(rouLeaseAccounts);
+    const deferredTaxAssetTotal = sumAssetList(deferredTaxAssetAccounts);
+    const otherNonCurrentTotal = sumAssetList(otherNonCurrentAssets);
+    const totalNonCurrentAssets = ppeTotal + rouLeaseTotal + deferredTaxAssetTotal + otherNonCurrentTotal;
 
-    const ppeTotal = sumList(ppeAccounts);
-    const rouLeaseTotal = sumList(rouLeaseAccounts);
-    const otherNonCurrentTotal = sumList(otherNonCurrentAssets);
-
-    const totalNonCurrentAssets = ppeTotal + rouLeaseTotal + otherNonCurrentTotal;
     const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
 
-    // Current Liabilities Groups
-    const apAccounts = postingAccounts.filter(a => a.code.startsWith('211') || a.code === '21000' || a.name.toLowerCase().includes('payable') && a.name.toLowerCase().includes('vendor') || a.name.toLowerCase().includes('accounts payable'));
-    const grniAccounts = postingAccounts.filter(a => a.code.startsWith('212') || a.name.toLowerCase().includes('grni') || a.name.toLowerCase().includes('goods received'));
-    const payrollLiabAccounts = postingAccounts.filter(a => a.code.startsWith('213') || a.code.startsWith('214') || a.code.startsWith('215') || a.name.toLowerCase().includes('salaries') || a.name.toLowerCase().includes('payroll') || a.name.toLowerCase().includes('eobi') || a.name.toLowerCase().includes('provident') || a.name.toLowerCase().includes('gratuity') || a.name.toLowerCase().includes('pension'));
-    const taxLiabAccounts = postingAccounts.filter(a => (a.code.startsWith('22') || a.name.toLowerCase().includes('vat') || a.name.toLowerCase().includes('sales tax') || a.name.toLowerCase().includes('tax payable')) && !payrollLiabAccounts.includes(a));
-    const shortLeaseAccounts = postingAccounts.filter(a => a.code.startsWith('216') || a.name.toLowerCase().includes('short-term lease') || a.name.toLowerCase().includes('current lease'));
-    const otherCurrentLiab = postingAccounts.filter(a => String(a.type).toLowerCase() === 'liability' && a.code.startsWith('21') && !apAccounts.includes(a) && !grniAccounts.includes(a) && !payrollLiabAccounts.includes(a) && !taxLiabAccounts.includes(a) && !shortLeaseAccounts.includes(a));
+    // Liabilities (IAS 1.69)
+    const isCurrentLiab = (a: Account) => {
+      const t = a.type.toLowerCase();
+      if (!t.includes('liability')) return false;
+      const sub = (a.subtype || '').toLowerCase();
+      if (sub.includes('current') && !sub.includes('non')) return true;
+      if (sub.includes('non-current')) return false;
+      const num = parseInt(a.code, 10);
+      if (!isNaN(num)) return num < 25000;
+      return !a.code.startsWith('25');
+    };
 
-    // Non-Current Liabilities Groups
-    const longLeaseAccounts = postingAccounts.filter(a => a.code.startsWith('251') || a.name.toLowerCase().includes('long-term lease') || a.name.toLowerCase().includes('lease liability (non-current)'));
-    const longDebtAccounts = postingAccounts.filter(a => a.code.startsWith('252') || a.code.startsWith('25') || a.name.toLowerCase().includes('bank loan') || a.name.toLowerCase().includes('notes payable') || a.name.toLowerCase().includes('long-term debt'));
-    const otherNonCurrentLiab = postingAccounts.filter(a => String(a.type).toLowerCase() === 'liability' && !a.code.startsWith('21') && !a.code.startsWith('22') && !longLeaseAccounts.includes(a) && !longDebtAccounts.includes(a));
+    const isNonCurrentLiab = (a: Account) => {
+      const t = a.type.toLowerCase();
+      if (!t.includes('liability')) return false;
+      return !isCurrentLiab(a);
+    };
+
+    const currentLiabAccounts = postingAccounts.filter(isCurrentLiab);
+    const nonCurrentLiabAccounts = postingAccounts.filter(isNonCurrentLiab);
+
+    const apAccounts = currentLiabAccounts.filter(a => 
+      a.code.startsWith('211') || a.name.toLowerCase().includes('accounts payable') || 
+      (a.name.toLowerCase().includes('payable') && a.name.toLowerCase().includes('vendor'))
+    );
+    const grniAccounts = currentLiabAccounts.filter(a => 
+      !apAccounts.includes(a) && (a.code.startsWith('212') || a.name.toLowerCase().includes('grni') || a.name.toLowerCase().includes('goods received'))
+    );
+    const payrollLiabAccounts = currentLiabAccounts.filter(a => 
+      !apAccounts.includes(a) && !grniAccounts.includes(a) && (
+        a.code.startsWith('213') || a.code.startsWith('214') || a.code.startsWith('215') || 
+        a.name.toLowerCase().includes('salaries') || a.name.toLowerCase().includes('payroll') || 
+        a.name.toLowerCase().includes('eobi') || a.name.toLowerCase().includes('provident') || 
+        a.name.toLowerCase().includes('gratuity') || a.name.toLowerCase().includes('pension') || a.name.toLowerCase().includes('eosb')
+      )
+    );
+    const shortLeaseAccounts = currentLiabAccounts.filter(a => 
+      !apAccounts.includes(a) && !grniAccounts.includes(a) && !payrollLiabAccounts.includes(a) && (
+        a.code.startsWith('216') || a.name.toLowerCase().includes('short-term lease') || a.name.toLowerCase().includes('current lease')
+      )
+    );
+    const taxLiabAccounts = currentLiabAccounts.filter(a => 
+      !apAccounts.includes(a) && !grniAccounts.includes(a) && !payrollLiabAccounts.includes(a) && !shortLeaseAccounts.includes(a) && (
+        a.code.startsWith('22') || a.name.toLowerCase().includes('vat') || a.name.toLowerCase().includes('sales tax') || a.name.toLowerCase().includes('tax payable') || a.name.toLowerCase().includes('wht payable')
+      )
+    );
+    const deferredRevAccounts = currentLiabAccounts.filter(a => 
+      !apAccounts.includes(a) && !grniAccounts.includes(a) && !payrollLiabAccounts.includes(a) && !shortLeaseAccounts.includes(a) && !taxLiabAccounts.includes(a) && (
+        a.code.startsWith('23') || a.name.toLowerCase().includes('deferred revenue') || a.name.toLowerCase().includes('unearned')
+      )
+    );
+    const otherCurrentLiab = currentLiabAccounts.filter(a => 
+      !apAccounts.includes(a) && !grniAccounts.includes(a) && !payrollLiabAccounts.includes(a) && !shortLeaseAccounts.includes(a) && !taxLiabAccounts.includes(a) && !deferredRevAccounts.includes(a)
+    );
+
+    // Non-Current Liabilities
+    const longLeaseAccounts = nonCurrentLiabAccounts.filter(a => 
+      a.code.startsWith('251') || a.name.toLowerCase().includes('long-term lease') || a.name.toLowerCase().includes('non-current lease')
+    );
+    const deferredTaxLiabAccounts = nonCurrentLiabAccounts.filter(a => 
+      !longLeaseAccounts.includes(a) && (a.code.startsWith('253') || a.code === '25200' || a.name.toLowerCase().includes('deferred tax'))
+    );
+    const longDebtAccounts = nonCurrentLiabAccounts.filter(a => 
+      !longLeaseAccounts.includes(a) && !deferredTaxLiabAccounts.includes(a) && (a.code.startsWith('252') || a.name.toLowerCase().includes('loan') || a.name.toLowerCase().includes('borrowing') || a.name.toLowerCase().includes('notes payable'))
+    );
+    const otherNonCurrentLiab = nonCurrentLiabAccounts.filter(a => 
+      !longLeaseAccounts.includes(a) && !longDebtAccounts.includes(a) && !deferredTaxLiabAccounts.includes(a)
+    );
 
     const sumLiabList = (list: Account[]) => list.reduce((sum, a) => {
       const bal = ledgerState.closingBalances[a.id] || 0;
-      return sum + (String(a.type).toLowerCase() === 'contraliability' ? -bal : bal);
+      return sum + (a.type === 'ContraLiability' ? -bal : bal);
     }, 0);
 
     const apTotal = sumLiabList(apAccounts);
     const grniTotal = sumLiabList(grniAccounts);
     const payrollLiabTotal = sumLiabList(payrollLiabAccounts);
-    const taxLiabTotal = sumLiabList(taxLiabAccounts);
     const shortLeaseTotal = sumLiabList(shortLeaseAccounts);
+    const taxLiabTotal = sumLiabList(taxLiabAccounts);
+    const deferredRevTotal = sumLiabList(deferredRevAccounts);
     const otherCurrentLiabTotal = sumLiabList(otherCurrentLiab);
-
-    const totalCurrentLiabilities = apTotal + grniTotal + payrollLiabTotal + taxLiabTotal + shortLeaseTotal + otherCurrentLiabTotal;
+    const totalCurrentLiabilities = apTotal + grniTotal + payrollLiabTotal + shortLeaseTotal + taxLiabTotal + deferredRevTotal + otherCurrentLiabTotal;
 
     const longLeaseTotal = sumLiabList(longLeaseAccounts);
     const longDebtTotal = sumLiabList(longDebtAccounts);
+    const deferredTaxLiabTotal = sumLiabList(deferredTaxLiabAccounts);
     const otherNonCurrentLiabTotal = sumLiabList(otherNonCurrentLiab);
+    const totalNonCurrentLiabilities = longLeaseTotal + longDebtTotal + deferredTaxLiabTotal + otherNonCurrentLiabTotal;
 
-    const totalNonCurrentLiabilities = longLeaseTotal + longDebtTotal + otherNonCurrentLiabTotal;
     const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
 
-    // Equity Groups
-    const shareCapitalAccounts = postingAccounts.filter(a => a.code.startsWith('31') || a.name.toLowerCase().includes('share capital') || a.name.toLowerCase().includes('owner investment') || a.name.toLowerCase().includes('capital'));
-    const retainedEarningsAccounts = postingAccounts.filter(a => a.code.startsWith('32') || a.name.toLowerCase().includes('retained earnings') || a.name.toLowerCase().includes('reserves'));
-    const otherEquityAccounts = postingAccounts.filter(a => String(a.type).toLowerCase() === 'equity' && !shareCapitalAccounts.includes(a) && !retainedEarningsAccounts.includes(a));
+    // Equity (IAS 1.78)
+    const equityAccounts = postingAccounts.filter(a => a.type.toLowerCase().includes('equity'));
+    const shareCapitalAccounts = equityAccounts.filter(a => 
+      a.code.startsWith('31') || a.code === '30000' || a.name.toLowerCase().includes('share capital') || 
+      a.name.toLowerCase().includes('paid-in') || a.name.toLowerCase().includes('owner investment') || (a.subtype || '').includes('Share Capital')
+    );
+    const retainedEarningsAccounts = equityAccounts.filter(a => 
+      !shareCapitalAccounts.includes(a) && (
+        a.code.startsWith('32') || a.name.toLowerCase().includes('retained earnings') || a.name.toLowerCase().includes('reserves') || (a.subtype || '').includes('Retained')
+      )
+    );
+    const otherEquityAccounts = equityAccounts.filter(a => 
+      !shareCapitalAccounts.includes(a) && !retainedEarningsAccounts.includes(a)
+    );
 
-    const shareCapitalTotal = sumLiabList(shareCapitalAccounts);
-    const retainedEarningsTotal = sumLiabList(retainedEarningsAccounts);
-    const otherEquityTotal = sumLiabList(otherEquityAccounts);
+    const sumEquityList = (list: Account[]) => list.reduce((sum, a) => {
+      const bal = ledgerState.closingBalances[a.id] || 0;
+      return sum + (a.type === 'ContraEquity' ? -bal : bal);
+    }, 0);
+
+    const shareCapitalTotal = sumEquityList(shareCapitalAccounts);
+    const retainedEarningsTotal = sumEquityList(retainedEarningsAccounts);
+    const otherEquityTotal = sumEquityList(otherEquityAccounts);
     const totalBaseEquity = shareCapitalTotal + retainedEarningsTotal + otherEquityTotal;
 
-    // P&L Net Income Integration
-    const revenueAccounts = postingAccounts.filter(a => String(a.type).toLowerCase() === 'revenue' || String(a.type).toLowerCase() === 'contrarevenue');
-    const expenseAccounts = postingAccounts.filter(a => String(a.type).toLowerCase() === 'expense' || String(a.type).toLowerCase() === 'contraexpense');
+    // P&L Net Period Income Flow
+    const revenueAccounts = postingAccounts.filter(a => a.type === 'Revenue' || a.type === 'ContraRevenue');
+    const expenseAccounts = postingAccounts.filter(a => a.type === 'Expense' || a.type === 'ContraExpense');
 
-    const totalRevenue = revenueAccounts.reduce((sum, a) => sum + (ledgerState.closingBalances[a.id] || 0), 0);
-    const totalExpenses = expenseAccounts.reduce((sum, a) => sum + (ledgerState.closingBalances[a.id] || 0), 0);
+    const totalRevenue = revenueAccounts.reduce((sum, a) => {
+      const bal = ledgerState.closingBalances[a.id] || 0;
+      return sum + (a.type === 'ContraRevenue' ? -bal : bal);
+    }, 0);
+
+    const totalExpenses = expenseAccounts.reduce((sum, a) => {
+      const bal = ledgerState.closingBalances[a.id] || 0;
+      return sum + (a.type === 'ContraExpense' ? -bal : bal);
+    }, 0);
+
     const netPeriodIncome = totalRevenue - totalExpenses;
-
     const totalEquity = totalBaseEquity + netPeriodIncome;
     const totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
     const variance = totalAssets - totalLiabilitiesAndEquity;
@@ -301,15 +480,17 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
 
     return {
       currentAssetsGroups: [
-        { id: 'cash_bank', title: 'Cash & Cash Equivalents (11100 / 11200)', total: cashBankTotal, accounts: cashBankAccounts },
-        { id: 'ar', title: 'Trade & Other Receivables (12000)', total: arTotal, accounts: arAccounts },
-        { id: 'inv', title: 'Inventories & Merchandise (13000)', total: invTotal, accounts: invAccounts },
+        { id: 'cash_bank', title: 'Cash & Cash Equivalents (IAS 7) (11100 / 11200)', total: cashBankTotal, accounts: cashBankAccounts },
+        { id: 'ar', title: 'Trade & Other Receivables (Net) (IAS 1) (12000)', total: arTotal, accounts: arAccounts },
+        { id: 'inv', title: 'Inventories & Merchandise (IAS 2) (13000)', total: invTotal, accounts: invAccounts },
         { id: 'prepaid', title: 'Prepayments & Short-term Advances (14000)', total: prepaidTotal, accounts: prepaidAccounts },
+        ...(taxRecoverableAccounts.length > 0 ? [{ id: 'tax_rec', title: 'VAT / Tax Input Recoverable (14100)', total: taxRecoverableTotal, accounts: taxRecoverableAccounts }] : []),
         ...(otherCurrentAssets.length > 0 ? [{ id: 'other_ca', title: 'Other Current Assets', total: otherCurrentTotal, accounts: otherCurrentAssets }] : [])
       ],
       nonCurrentAssetsGroups: [
-        { id: 'ppe', title: 'Property, Plant & Equipment (Net of Acc. Depr) (15000)', total: ppeTotal, accounts: ppeAccounts },
-        ...(rouLeaseAccounts.length > 0 ? [{ id: 'rou', title: 'Right-of-Use (ROU) Leased Assets (IFRS 16)', total: rouLeaseTotal, accounts: rouLeaseAccounts }] : []),
+        { id: 'ppe', title: 'Property, Plant & Equipment (Net) (IAS 16) (15100-15200)', total: ppeTotal, accounts: ppeAccounts },
+        ...(rouLeaseAccounts.length > 0 ? [{ id: 'rou', title: 'Right-of-Use Leased Assets (IFRS 16) (15110)', total: rouLeaseTotal, accounts: rouLeaseAccounts }] : []),
+        ...(deferredTaxAssetAccounts.length > 0 ? [{ id: 'dta', title: 'Deferred Tax Assets (IAS 12) (15300)', total: deferredTaxAssetTotal, accounts: deferredTaxAssetAccounts }] : []),
         ...(otherNonCurrentAssets.length > 0 ? [{ id: 'other_nca', title: 'Other Non-Current Assets', total: otherNonCurrentTotal, accounts: otherNonCurrentAssets }] : [])
       ],
       totalCurrentAssets,
@@ -318,24 +499,26 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
 
       currentLiabilitiesGroups: [
         { id: 'ap', title: 'Trade Accounts Payable (21100)', total: apTotal, accounts: apAccounts },
-        ...(grniAccounts.length > 0 ? [{ id: 'grni', title: 'Goods Received Not Invoiced (GRNI Accrual) (21200)', total: grniTotal, accounts: grniAccounts }] : []),
-        { id: 'payroll_liab', title: 'Accrued Payroll & Statutory Obligations (21300-21500)', total: payrollLiabTotal, accounts: payrollLiabAccounts },
-        { id: 'tax_liab', title: 'Sales Tax / VAT Output Payable (22000)', total: taxLiabTotal, accounts: taxLiabAccounts },
-        ...(shortLeaseAccounts.length > 0 ? [{ id: 'short_lease', title: 'Current Lease Liabilities (IFRS 16)', total: shortLeaseTotal, accounts: shortLeaseAccounts }] : []),
+        ...(grniAccounts.length > 0 ? [{ id: 'grni', title: 'Goods Received Not Invoiced (GRNI Accruals) (21200)', total: grniTotal, accounts: grniAccounts }] : []),
+        { id: 'payroll_liab', title: 'Accrued Payroll & Statutory Liabilities (IAS 19) (21300-21500)', total: payrollLiabTotal, accounts: payrollLiabAccounts },
+        { id: 'tax_liab', title: 'Sales Tax / VAT Output & Tax Payable (22000)', total: taxLiabTotal, accounts: taxLiabAccounts },
+        ...(shortLeaseAccounts.length > 0 ? [{ id: 'short_lease', title: 'Current Lease Liabilities (IFRS 16) (21600)', total: shortLeaseTotal, accounts: shortLeaseAccounts }] : []),
+        ...(deferredRevAccounts.length > 0 ? [{ id: 'def_rev', title: 'Deferred Revenue & Customer Deposits (IFRS 15) (23000)', total: deferredRevTotal, accounts: deferredRevAccounts }] : []),
         ...(otherCurrentLiab.length > 0 ? [{ id: 'other_cl', title: 'Other Current Liabilities', total: otherCurrentLiabTotal, accounts: otherCurrentLiab }] : [])
       ],
       nonCurrentLiabilitiesGroups: [
         ...(longLeaseAccounts.length > 0 ? [{ id: 'long_lease', title: 'Long-Term Lease Liabilities (IFRS 16) (25100)', total: longLeaseTotal, accounts: longLeaseAccounts }] : []),
-        ...(longDebtAccounts.length > 0 ? [{ id: 'long_debt', title: 'Long-Term Bank Financing & Notes (25200)', total: longDebtTotal, accounts: longDebtAccounts }] : []),
-        ...(otherNonCurrentLiab.length > 0 ? [{ id: 'other_ncl', title: 'Other Long-Term Liabilities & Provisions', total: otherNonCurrentLiabTotal, accounts: otherNonCurrentLiab }] : [])
+        ...(longDebtAccounts.length > 0 ? [{ id: 'long_debt', title: 'Long-Term Bank Borrowings & Notes (25200)', total: longDebtTotal, accounts: longDebtAccounts }] : []),
+        ...(deferredTaxLiabAccounts.length > 0 ? [{ id: 'dtl', title: 'Deferred Tax Liabilities (IAS 12) (25300)', total: deferredTaxLiabTotal, accounts: deferredTaxLiabAccounts }] : []),
+        ...(otherNonCurrentLiab.length > 0 ? [{ id: 'other_ncl', title: 'Other Non-Current Liabilities & Long-Term Provisions', total: otherNonCurrentLiabTotal, accounts: otherNonCurrentLiab }] : [])
       ],
       totalCurrentLiabilities,
       totalNonCurrentLiabilities,
       totalLiabilities,
 
       equityGroups: [
-        { id: 'share_capital', title: 'Share Capital / Paid-In Capital (31000)', total: shareCapitalTotal, accounts: shareCapitalAccounts },
-        { id: 'retained_earnings', title: 'Retained Earnings (Prior Reserves) (32000)', total: retainedEarningsTotal, accounts: retainedEarningsAccounts },
+        { id: 'share_capital', title: 'Share Capital & Paid-In Capital (31000)', total: shareCapitalTotal, accounts: shareCapitalAccounts },
+        { id: 'retained_earnings', title: 'Retained Earnings & Reserves (32000)', total: retainedEarningsTotal, accounts: retainedEarningsAccounts },
         ...(otherEquityAccounts.length > 0 ? [{ id: 'other_eq', title: 'Other Capital Reserves', total: otherEquityTotal, accounts: otherEquityAccounts }] : []),
       ],
       totalBaseEquity,
@@ -347,65 +530,120 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
     };
   }, [accounts, ledgerState]);
 
-  // ── 4. Grouping Builder for Income Statement / P&L (IFRS 15) ───────────────
+  // ── 4. Grouping Builder for Income Statement / P&L (IFRS 15 / IAS 1) ───────
   const incomeStatement = useMemo(() => {
     const postingAccounts = accounts.filter(isLeafAccount);
 
-    const operatingRevAccounts = postingAccounts.filter(a => String(a.type).toLowerCase() === 'revenue' && (a.code.startsWith('41') || a.name.toLowerCase().includes('sales') || a.name.toLowerCase().includes('service') || a.name.toLowerCase().includes('fee')));
-    const otherRevAccounts = postingAccounts.filter(a => String(a.type).toLowerCase() === 'revenue' && !operatingRevAccounts.includes(a));
+    // Revenue Dissection (IFRS 15)
+    const productSalesAccounts = postingAccounts.filter(a => 
+      a.type === 'Revenue' && (a.code === '41100' || a.name.toLowerCase().includes('product') || a.name.toLowerCase().includes('sales revenue') || a.name.toLowerCase().includes('merchandise'))
+    );
+    const serviceSalesAccounts = postingAccounts.filter(a => 
+      a.type === 'Revenue' && !productSalesAccounts.includes(a) && (
+        a.code === '41200' || a.name.toLowerCase().includes('service') || a.name.toLowerCase().includes('consulting') || a.name.toLowerCase().includes('professional')
+      )
+    );
+    const salesDiscountAccounts = postingAccounts.filter(a => 
+      a.type === 'ContraRevenue' || a.code === '41300' || a.code === '41400' ||
+      ((a.type === 'Revenue' || a.type === 'ContraRevenue') && (a.name.toLowerCase().includes('discount') || a.name.toLowerCase().includes('return')))
+    );
+    const otherRevAccounts = postingAccounts.filter(a => 
+      a.type === 'Revenue' && !productSalesAccounts.includes(a) && !serviceSalesAccounts.includes(a) && !salesDiscountAccounts.includes(a)
+    );
 
-    const cogsAccounts = postingAccounts.filter(a => a.code.startsWith('5') || a.name.toLowerCase().includes('cost of') || a.name.toLowerCase().includes('cogs') || a.name.toLowerCase().includes('direct material') || a.name.toLowerCase().includes('direct labor'));
-    const payrollExpAccounts = postingAccounts.filter(a => a.code.startsWith('612') || a.name.toLowerCase().includes('salaries') || a.name.toLowerCase().includes('wages') || a.name.toLowerCase().includes('payroll') || a.name.toLowerCase().includes('eobi expense') || a.name.toLowerCase().includes('provident fund'));
-    const adminExpAccounts = postingAccounts.filter(a => a.code.startsWith('611') || (a.code.startsWith('61') && !cogsAccounts.includes(a) && !payrollExpAccounts.includes(a) && !a.code.startsWith('613') && !a.code.startsWith('614') && !a.code.startsWith('615') && !a.code.startsWith('617')));
-    const deprExpAccounts = postingAccounts.filter(a => a.code.startsWith('613') || a.name.toLowerCase().includes('depreciation') || a.name.toLowerCase().includes('amortization'));
-    const financeExpAccounts = postingAccounts.filter(a => a.code.startsWith('614') || a.code.startsWith('615') || a.code.startsWith('617') || a.name.toLowerCase().includes('interest') || a.name.toLowerCase().includes('bank charges') || a.name.toLowerCase().includes('tax expense'));
+    const productSalesTotal = productSalesAccounts.reduce((sum, a) => sum + (ledgerState.closingBalances[a.id] || 0), 0);
+    const serviceSalesTotal = serviceSalesAccounts.reduce((sum, a) => sum + (ledgerState.closingBalances[a.id] || 0), 0);
+    const salesDiscountTotal = salesDiscountAccounts.reduce((sum, a) => sum + (ledgerState.closingBalances[a.id] || 0), 0);
+    const otherRevTotal = otherRevAccounts.reduce((sum, a) => sum + (ledgerState.closingBalances[a.id] || 0), 0);
 
-    const sumExp = (list: Account[]) => list.reduce((sum, a) => sum + (ledgerState.closingBalances[a.id] || 0), 0);
+    const grossTurnover = productSalesTotal + serviceSalesTotal + otherRevTotal;
+    const grossRevenue = grossTurnover - salesDiscountTotal;
 
-    const operatingRevTotal = sumExp(operatingRevAccounts);
-    const otherRevTotal = sumExp(otherRevAccounts);
-    const grossRevenue = operatingRevTotal + otherRevTotal;
+    // Cost of Goods Sold (IAS 2)
+    const cogsAccounts = postingAccounts.filter(a => 
+      (a.type === 'Expense' || a.type === 'ContraExpense') && (
+        a.code.startsWith('5') || a.name.toLowerCase().includes('cost of') || a.name.toLowerCase().includes('cogs') || a.name.toLowerCase().includes('direct material') || a.name.toLowerCase().includes('cost of sales')
+      )
+    );
+    const cogsTotal = cogsAccounts.reduce((sum, a) => {
+      const bal = ledgerState.closingBalances[a.id] || 0;
+      return sum + (a.type === 'ContraExpense' ? -bal : bal);
+    }, 0);
 
-    const cogsTotal = sumExp(cogsAccounts);
     const grossProfit = grossRevenue - cogsTotal;
     const grossMarginPct = grossRevenue > 0 ? (grossProfit / grossRevenue) * 100 : 0;
 
-    const payrollTotal = sumExp(payrollExpAccounts);
-    const adminTotal = sumExp(adminExpAccounts);
-    const deprTotal = sumExp(deprExpAccounts);
+    // Operating Expenses (IAS 19 / IAS 16)
+    const allExpenses = postingAccounts.filter(a => 
+      (a.type === 'Expense' || a.type === 'ContraExpense') && !cogsAccounts.includes(a)
+    );
+
+    const payrollExpAccounts = allExpenses.filter(a => 
+      a.code.startsWith('612') || a.name.toLowerCase().includes('salaries') || a.name.toLowerCase().includes('wages') || 
+      a.name.toLowerCase().includes('payroll') || a.name.toLowerCase().includes('eobi') || a.name.toLowerCase().includes('provident') || 
+      a.name.toLowerCase().includes('gratuity') || a.name.toLowerCase().includes('hra') || a.name.toLowerCase().includes('allowance')
+    );
+
+    const deprExpAccounts = allExpenses.filter(a => 
+      !payrollExpAccounts.includes(a) && (a.code.startsWith('613') || a.name.toLowerCase().includes('depreciation') || a.name.toLowerCase().includes('amortization'))
+    );
+
+    const financeExpAccounts = allExpenses.filter(a => 
+      !payrollExpAccounts.includes(a) && !deprExpAccounts.includes(a) && (
+        a.code.startsWith('618') || a.code === '61400' || a.code.startsWith('62') || a.name.toLowerCase().includes('interest') || a.name.toLowerCase().includes('bank charges') || a.name.toLowerCase().includes('tax provision') || a.name.toLowerCase().includes('corporate income tax')
+      )
+    );
+
+    const adminExpAccounts = allExpenses.filter(a => 
+      !payrollExpAccounts.includes(a) && !deprExpAccounts.includes(a) && !financeExpAccounts.includes(a)
+    );
+
+    const sumExpList = (list: Account[]) => list.reduce((sum, a) => {
+      const bal = ledgerState.closingBalances[a.id] || 0;
+      return sum + (a.type === 'ContraExpense' ? -bal : bal);
+    }, 0);
+
+    const payrollTotal = sumExpList(payrollExpAccounts);
+    const adminTotal = sumExpList(adminExpAccounts);
+    const deprTotal = sumExpList(deprExpAccounts);
     const totalOperatingExpenses = payrollTotal + adminTotal + deprTotal;
 
     const operatingIncomeEbit = grossProfit - totalOperatingExpenses;
-    const financeTotal = sumExp(financeExpAccounts);
+    const financeTotal = sumExpList(financeExpAccounts);
     const netProfit = operatingIncomeEbit - financeTotal;
     const netMarginPct = grossRevenue > 0 ? (netProfit / grossRevenue) * 100 : 0;
 
     return {
       revenueGroups: [
-        { id: 'op_rev', title: 'Operating Revenue & Sales (41000)', total: operatingRevTotal, accounts: operatingRevAccounts },
-        ...(otherRevAccounts.length > 0 ? [{ id: 'other_rev', title: 'Other Income & Ancillary Gains (49000)', total: otherRevTotal, accounts: otherRevAccounts }] : [])
+        ...(productSalesAccounts.length > 0 ? [{ id: 'prod_rev', title: 'Product Sales Revenue (41100)', total: productSalesTotal, accounts: productSalesAccounts }] : []),
+        ...(serviceSalesAccounts.length > 0 ? [{ id: 'serv_rev', title: 'Service Revenue & Professional Fees (41200)', total: serviceSalesTotal, accounts: serviceSalesAccounts }] : []),
+        ...(otherRevAccounts.length > 0 ? [{ id: 'other_rev', title: 'Other Operating Income & Gains (41500)', total: otherRevTotal, accounts: otherRevAccounts }] : []),
+        ...(salesDiscountAccounts.length > 0 ? [{ id: 'sales_disc', title: 'Less: Sales Discounts & Returns (41300-41400)', total: -salesDiscountTotal, accounts: salesDiscountAccounts }] : [])
       ],
+      grossTurnover,
       grossRevenue,
-      cogsGroup: { id: 'cogs', title: 'Cost of Goods Sold & Direct Costs (51000)', total: cogsTotal, accounts: cogsAccounts },
+      cogsGroup: { id: 'cogs', title: 'Cost of Goods Sold & Direct Costs (IAS 2) (51000)', total: cogsTotal, accounts: cogsAccounts },
       grossProfit,
       grossMarginPct,
       opexGroups: [
-        { id: 'payroll_exp', title: 'Salaries, Wages & Personnel Expense (IAS 19) (61200)', total: payrollTotal, accounts: payrollExpAccounts },
+        { id: 'payroll_exp', title: 'Personnel & Employee Benefits Expense (IAS 19) (61200)', total: payrollTotal, accounts: payrollExpAccounts },
         { id: 'admin_exp', title: 'General & Administrative Operating Expenses (61100)', total: adminTotal, accounts: adminExpAccounts },
-        ...(deprExpAccounts.length > 0 ? [{ id: 'depr_exp', title: 'Depreciation & Amortization Expense (61300)', total: deprTotal, accounts: deprExpAccounts }] : [])
+        ...(deprExpAccounts.length > 0 ? [{ id: 'depr_exp', title: 'Depreciation & Amortization Expense (IAS 16 / IAS 38) (61300)', total: deprTotal, accounts: deprExpAccounts }] : [])
       ],
       totalOperatingExpenses,
       operatingIncomeEbit,
-      financeGroup: { id: 'fin_tax', title: 'Finance Costs, Bank Charges & Tax Provision (61500)', total: financeTotal, accounts: financeExpAccounts },
+      financeGroup: { id: 'fin_tax', title: 'Finance Costs & Corporate Income Tax Provision (IAS 12) (61800)', total: financeTotal, accounts: financeExpAccounts },
       netProfit,
       netMarginPct
     };
   }, [accounts, ledgerState]);
 
-  // ── 5. Statement of Cash Flows (IAS 7) ────────────────────────────────────
+  // ── 5. Statement of Cash Flows (IAS 7 - Indirect Method) ───────────────────
   const cashFlowStatement = useMemo(() => {
     const postingAccounts = accounts.filter(isLeafAccount);
-    const cashAccounts = postingAccounts.filter(a => a.code.startsWith('111') || a.code.startsWith('112') || a.name.toLowerCase().includes('cash') || a.name.toLowerCase().includes('bank'));
+    const cashAccounts = postingAccounts.filter(a => 
+      a.code.startsWith('111') || a.code.startsWith('112') || a.name.toLowerCase().includes('cash') || a.name.toLowerCase().includes('bank')
+    );
 
     const openingCash = cashAccounts.reduce((sum, a) => sum + (ledgerState.openingBalances[a.id] || 0), 0);
     const closingCash = cashAccounts.reduce((sum, a) => sum + (ledgerState.closingBalances[a.id] || 0), 0);
@@ -414,21 +652,24 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
     const netIncome = incomeStatement.netProfit;
     const deprAddback = incomeStatement.opexGroups.find(g => g.id === 'depr_exp')?.total || 0;
 
-    const arAccounts = postingAccounts.filter(a => a.code.startsWith('12'));
+    const arAccounts = postingAccounts.filter(a => a.type.toLowerCase().includes('asset') && (a.code.startsWith('12') || a.name.toLowerCase().includes('receivable')));
     const arChange = arAccounts.reduce((sum, a) => sum + ((ledgerState.closingBalances[a.id] || 0) - (ledgerState.openingBalances[a.id] || 0)), 0);
 
-    const invAccounts = postingAccounts.filter(a => a.code.startsWith('13'));
+    const invAccounts = postingAccounts.filter(a => a.type.toLowerCase().includes('asset') && (a.code.startsWith('13') || a.name.toLowerCase().includes('inventory')));
     const invChange = invAccounts.reduce((sum, a) => sum + ((ledgerState.closingBalances[a.id] || 0) - (ledgerState.openingBalances[a.id] || 0)), 0);
 
-    const apAccounts = postingAccounts.filter(a => a.code.startsWith('211') || a.code.startsWith('212'));
+    const prepaidAccounts = postingAccounts.filter(a => a.type.toLowerCase().includes('asset') && (a.code.startsWith('14') || a.name.toLowerCase().includes('prepaid')));
+    const prepaidChange = prepaidAccounts.reduce((sum, a) => sum + ((ledgerState.closingBalances[a.id] || 0) - (ledgerState.openingBalances[a.id] || 0)), 0);
+
+    const apAccounts = postingAccounts.filter(a => a.type.toLowerCase().includes('liability') && (a.code.startsWith('211') || a.code.startsWith('212')));
     const apChange = apAccounts.reduce((sum, a) => sum + ((ledgerState.closingBalances[a.id] || 0) - (ledgerState.openingBalances[a.id] || 0)), 0);
 
-    const taxPayableAccounts = postingAccounts.filter(a => a.code.startsWith('213') || a.code.startsWith('214') || a.code.startsWith('215') || a.code.startsWith('22'));
+    const taxPayableAccounts = postingAccounts.filter(a => a.type.toLowerCase().includes('liability') && (a.code.startsWith('213') || a.code.startsWith('214') || a.code.startsWith('215') || a.code.startsWith('22')));
     const taxPayableChange = taxPayableAccounts.reduce((sum, a) => sum + ((ledgerState.closingBalances[a.id] || 0) - (ledgerState.openingBalances[a.id] || 0)), 0);
 
-    const netOperatingCashFlow = netIncome + deprAddback - arChange - invChange + apChange + taxPayableChange;
+    const netOperatingCashFlow = netIncome + deprAddback - arChange - invChange - prepaidChange + apChange + taxPayableChange;
 
-    const ppeAccounts = postingAccounts.filter(a => a.code.startsWith('15') && !a.name.toLowerCase().includes('accumulated'));
+    const ppeAccounts = postingAccounts.filter(a => a.type === 'Asset' && (a.code.startsWith('151') || a.name.toLowerCase().includes('equipment') || a.name.toLowerCase().includes('fixed asset')));
     const capexPurchases = ppeAccounts.reduce((sum, a) => sum + ((ledgerState.closingBalances[a.id] || 0) - (ledgerState.openingBalances[a.id] || 0)), 0);
     const netInvestingCashFlow = -capexPurchases;
 
@@ -442,6 +683,7 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
       deprAddback,
       arChange,
       invChange,
+      prepaidChange,
       apChange,
       taxPayableChange,
       netOperatingCashFlow,
@@ -468,7 +710,7 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
       .sort((a, b) => a.code.localeCompare(b.code))
       .map(a => {
         const bal = ledgerState.closingBalances[a.id] || 0;
-        const isDebitNormal = String(a.type).toLowerCase() === 'asset' || String(a.type).toLowerCase() === 'expense' || String(a.type).toLowerCase().includes('contra');
+        const isDebitNormal = isAccountNormalDebit(a.type, a.normalBalance);
         const finalDebit = isDebitNormal ? (bal > 0 ? bal : 0) : (bal < 0 ? -bal : 0);
         const finalCredit = !isDebitNormal ? (bal > 0 ? bal : 0) : (bal < 0 ? -bal : 0);
 
@@ -538,8 +780,8 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
       const hasChildren = children.length > 0;
       const isCollapsed = !!collapsedAccounts[acc.id];
       const bal = ledgerState.closingBalances[acc.id] || 0;
-      const isNegative = String(acc.type).toLowerCase().includes('contra');
-      const displayBal = isNegative ? (bal > 0 ? -bal : bal) : bal;
+      const isContra = acc.type === 'ContraAsset' || acc.type === 'ContraLiability' || acc.type === 'ContraEquity' || acc.type === 'ContraRevenue' || acc.type === 'ContraExpense';
+      const displayBal = isContra ? -bal : bal;
 
       return (
         <div key={acc.id} className="space-y-0.5">
@@ -1785,8 +2027,35 @@ export const FinancialReports: React.FC<FinancialReportsProps> = ({
               </label>
             </div>
 
-            <div className="text-xs font-bold text-muted-foreground">
-              Total Posting Ledgers: <strong className="text-teal-600">{trialBalanceRows.length}</strong>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="inline-flex p-0.5 bg-muted rounded-lg border border-border text-xs font-semibold shadow-2xs">
+                <button
+                  onClick={() => setTbFilterMode('active_only')}
+                  className={`px-3 py-1 rounded-md text-xs transition-all cursor-pointer ${
+                    tbFilterMode === 'active_only'
+                      ? 'bg-teal-600 text-white font-bold shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  title="Filter out voided/reversed pairs so Period Movements reflect only genuine active transactions"
+                >
+                  🟢 Active Invoices Only (Net Clean)
+                </button>
+                <button
+                  onClick={() => setTbFilterMode('all_postings')}
+                  className={`px-3 py-1 rounded-md text-xs transition-all cursor-pointer ${
+                    tbFilterMode === 'all_postings'
+                      ? 'bg-teal-600 text-white font-bold shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  title="Show full gross debit and credit movements including cancelled transactions for auditor forensic review"
+                >
+                  🔍 Full Audit Trail (Include Voids)
+                </button>
+              </div>
+
+              <div className="text-xs font-bold text-muted-foreground">
+                Total Posting Ledgers: <strong className="text-teal-600">{trialBalanceRows.length}</strong>
+              </div>
             </div>
           </div>
 

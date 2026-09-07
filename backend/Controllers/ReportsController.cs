@@ -19,7 +19,7 @@ public class ReportsController(AccountingStore store) : ControllerBase
 
     private static IEnumerable<JournalEntry> PostedEntries(AccountingStore store, Guid? companyId, string? from, string? to)
     {
-        var query = store.Entries.Where(e => e.Status == JournalStatus.Posted);
+        var query = store.Entries.Where(e => e.Status == JournalStatus.Posted || e.Status == JournalStatus.Reversed);
         if (companyId.HasValue) query = query.Where(e => e.CompanyId == companyId);
         if (DateOnly.TryParse(from, out var fromDate)) query = query.Where(e => e.Date >= fromDate);
         if (DateOnly.TryParse(to, out var toDate)) query = query.Where(e => e.Date <= toDate);
@@ -47,7 +47,7 @@ public class ReportsController(AccountingStore store) : ControllerBase
             var bal = balances.GetValueOrDefault(a.Id);
             var (debit, credit) = a.NormalBalance == NormalBalanceType.Debit
                 ? (bal > 0 ? bal : 0m, bal < 0 ? -bal : 0m)
-                : (bal < 0 ? -bal : 0m, bal > 0 ? bal : 0m);
+                : (bal > 0 ? bal : 0m, bal < 0 ? -bal : 0m);
             return new { a.Id, a.Code, a.Name, a.Type, Debit = debit, Credit = credit, Balance = bal };
         }).Where(r => r.Balance != 0).OrderBy(r => r.Code).ToList();
         return Ok(new { totalDebit = rows.Sum(r => r.Debit), totalCredit = rows.Sum(r => r.Credit), rows });
@@ -86,6 +86,16 @@ public class ReportsController(AccountingStore store) : ControllerBase
             })
             .Where(r => r.Amount != 0)
             .OrderBy(r => r.Code).ToList();
+
+        var revenue = PostingAccounts(store)
+            .Where(a => IsRevenue(a.Type))
+            .Sum(a => -(balances.GetValueOrDefault(a.Id)));
+        var expenses = PostingAccounts(store)
+            .Where(a => IsExpense(a.Type))
+            .Sum(a => balances.GetValueOrDefault(a.Id));
+        var retainedEarnings = revenue - expenses;
+        if (retainedEarnings != 0)
+            rows.Add(new { Id = Guid.Empty, Code = "RE", Name = "Retained Earnings (Net Income)", Type = AccountType.Equity, Amount = retainedEarnings });
 
         var assets = rows.Where(r => IsAsset(r.Type)).Sum(r => r.Amount);
         var liabilities = rows.Where(r => IsLiability(r.Type)).Sum(r => r.Amount);
@@ -235,14 +245,37 @@ public class ReportsController(AccountingStore store) : ControllerBase
         var closingCash = openingCash + netCashFlow;
 
         // Income Statement numbers for Indirect Method
+        // Income Statement numbers & Working Capital for Indirect Method (IAS 7)
         var balances = AccountBalances(store, companyId, from, to);
         var rows = PostingAccounts(store)
             .Where(a => IsRevenue(a.Type) || IsExpense(a.Type))
-            .Select(a => new { a.Id, a.Code, a.Name, a.Type, Amount = balances.GetValueOrDefault(a.Id) })
+            .Select(a => {
+                var rawBal = balances.GetValueOrDefault(a.Id);
+                var amount = IsRevenue(a.Type) ? -rawBal : rawBal;
+                return new { a.Id, a.Code, a.Name, a.Type, Amount = amount };
+            })
             .Where(r => r.Amount != 0).ToList();
         var revenue = rows.Where(r => IsRevenue(r.Type)).Sum(r => r.Amount);
         var expenses = rows.Where(r => IsExpense(r.Type)).Sum(r => r.Amount);
         var netIncome = revenue - expenses;
+
+        // Working Capital Changes
+        var arAccounts = PostingAccounts(store).Where(a => IsAsset(a.Type) && (a.Code.StartsWith("12") || a.Name.Contains("Receivable", StringComparison.OrdinalIgnoreCase)));
+        var arChange = arAccounts.Sum(a => balances.GetValueOrDefault(a.Id) - a.OpeningBalance);
+
+        var invAccounts = PostingAccounts(store).Where(a => IsAsset(a.Type) && (a.Code.StartsWith("13") || a.Name.Contains("Inventory", StringComparison.OrdinalIgnoreCase)));
+        var invChange = invAccounts.Sum(a => balances.GetValueOrDefault(a.Id) - a.OpeningBalance);
+
+        var apAccounts = PostingAccounts(store).Where(a => IsLiability(a.Type) && (a.Code.StartsWith("211") || a.Code.StartsWith("212") || (a.Name.Contains("Payable", StringComparison.OrdinalIgnoreCase) && !a.Code.StartsWith("22") && !a.Name.Contains("Tax", StringComparison.OrdinalIgnoreCase))));
+        var apChange = apAccounts.Sum(a => -(balances.GetValueOrDefault(a.Id) - a.OpeningBalance));
+
+        var taxPayableAccounts = PostingAccounts(store).Where(a => IsLiability(a.Type) && (a.Code.StartsWith("22") || a.Code.StartsWith("213") || a.Code.StartsWith("214")));
+        var taxPayableChange = taxPayableAccounts.Sum(a => -(balances.GetValueOrDefault(a.Id) - a.OpeningBalance));
+
+        var deprAccounts = PostingAccounts(store).Where(a => IsExpense(a.Type) && (a.Code.StartsWith("613") || a.Name.Contains("Depreciation", StringComparison.OrdinalIgnoreCase)));
+        var deprAddback = deprAccounts.Sum(a => balances.GetValueOrDefault(a.Id) - a.OpeningBalance);
+
+        var indirectOperatingCashFlow = netIncome + deprAddback - arChange - invChange + apChange + taxPayableChange;
 
         var bankAccounts = store.GetCashBankAccounts(bankOnly: true, companyId);
         var cashAccounts = store.GetCashBankAccounts(bankOnly: false, companyId);
@@ -276,19 +309,20 @@ public class ReportsController(AccountingStore store) : ControllerBase
             indirectMethod = new
             {
                 netIncome,
-                adjustments = new List<object>(),
+                depreciationAddback = deprAddback,
                 workingCapitalChanges = new
                 {
-                    accountsReceivable = 0m,
-                    inventory = 0m,
-                    accountsPayable = 0m
+                    accountsReceivableChange = -arChange,
+                    inventoryChange = -invChange,
+                    accountsPayableChange = apChange,
+                    taxPayableChange = taxPayableChange
                 },
-                netOperating,
+                netOperating = indirectOperatingCashFlow,
                 netInvesting,
                 netFinancing,
-                netCashFlow,
+                netCashFlow = indirectOperatingCashFlow + netInvesting + netFinancing,
                 openingCash,
-                closingCash
+                closingCash = openingCash + (indirectOperatingCashFlow + netInvesting + netFinancing)
             }
         });
     }
@@ -326,6 +360,7 @@ public class ReportsController(AccountingStore store) : ControllerBase
         var invoices = store.SalesInvoices
             .Where(i => companyId == null || i.CompanyId == companyId)
             .Where(i => customerId == null || i.CustomerId == customerId.Value)
+            .Where(i => i.Status != SalesInvoiceStatus.Draft && i.Status != SalesInvoiceStatus.Void)
             .Select(i => new
             {
                 i.Id,
@@ -354,7 +389,7 @@ public class ReportsController(AccountingStore store) : ControllerBase
         var bills = store.VendorBills
             .Where(b => companyId == null || b.CompanyId == companyId)
             .Where(b => vendorId == null || b.VendorId == vendorId.Value)
-            .Where(b => b.Status == VendorBillStatus.Open || b.Status == VendorBillStatus.PartiallyPaid)
+            .Where(b => b.Status != VendorBillStatus.Draft && b.Status != VendorBillStatus.Void)
             .Select(b => new
             {
                 b.Id,
@@ -388,14 +423,17 @@ public class ReportsController(AccountingStore store) : ControllerBase
 
         var bills = store.VendorBills
             .Where(b => companyId == null || b.CompanyId == companyId)
+            .Where(b => b.Status != VendorBillStatus.Void)
             .Where(b => InRange(b.Date))
             .ToList();
         var purchaseOrders = store.PurchaseOrders
             .Where(p => companyId == null || p.CompanyId == companyId)
+            .Where(p => p.Status != PurchaseOrderStatus.Canceled)
             .Where(p => InRange(p.Date))
             .ToList();
         var payments = store.VendorPayments
             .Where(p => companyId == null || p.CompanyId == companyId)
+            .Where(p => p.Status != VendorPaymentStatus.Void)
             .Where(p => InRange(p.PaymentDate))
             .ToList();
 

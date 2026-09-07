@@ -381,6 +381,7 @@ export const payrollApi = {
   getPayrunEmployees: (id: string) => apiClient<PayrunEmployee[]>(`/payroll/payruns/${id}/employees`),
   calculatePayrun: (data: any) => apiClient<any>('/payroll/payruns/calculate', { method: 'POST', body: data }),
   postPayrun: (data: any) => apiClient<any>('/payroll/payruns/post', { method: 'POST', body: data }),
+  postPayrunToGL: (id: string) => apiClient<any>(`/payroll/payruns/${id}/post-to-gl`, { method: 'POST' }),
 
   // Salary Slips
   getSalarySlips: (params?: { payrunId?: string; employeeId?: string; companyId?: string }) =>

@@ -45,4 +45,12 @@ public class VouchersController(AccountingStore store) : ControllerBase
             return BadRequest(new { Error = error });
         return Created($"/api/v1/vouchers/{voucher!.Id}", voucher);
     }
+
+    [HttpPost("{id}/void")]
+    public IActionResult VoidVoucher(Guid id)
+    {
+        if (store.VoidVoucher(id, out var error))
+            return Ok(new { message = "Voucher voided and ledger reversal posted." });
+        return BadRequest(new { Error = error });
+    }
 }

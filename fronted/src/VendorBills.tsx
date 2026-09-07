@@ -4,10 +4,13 @@ import { DataToolbar } from '@/components/ui/data-toolbar';
 import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
 import { EmptyState } from './components/ui/empty-state';
 import { money } from './lib/currency';
+import { formatBillNumber } from './lib/invoiceNumbering';
 import {
   FileText, Receipt, CheckCircle, Plus, X, Eye, ArrowRight,
-  CreditCard, Truck, Trash2
+  CreditCard, Truck, Trash2, Building2
 } from 'lucide-react';
+import { CompactSelect } from './components/CompactSelect';
+import { CompactProductSelect } from './components/CompactProductSelect';
 
 export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntityId }) => {
   const bills = useProcurementStore((s) => s.bills);
@@ -21,6 +24,7 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
   const vendors = useVendorsStore((s) => s.vendors);
   const fetchVendors = useVendorsStore((s) => s.fetchVendors);
 
+  const products = useProductsStore((s) => s.products);
   const fetchProducts = useProductsStore((s) => s.fetchProducts);
   const accounts = useCoaStore((s) => s.accounts);
   const fetchAccounts = useCoaStore((s) => s.fetchAccounts);
@@ -61,8 +65,12 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
     let maxNum = 0;
     for (const item of bills) {
       const str = (item.billNumber || '') + '';
+      if (str.startsWith('BILL-202') || str.length > 11) continue;
       const match = str.match(/BILL-(\d+)/i);
-      if (match) { const num = parseInt(match[1], 10); if (!isNaN(num) && num > maxNum) maxNum = num; }
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num < 100000 && num > maxNum) maxNum = num;
+      }
     }
     return `BILL-${(maxNum + 1).toString().padStart(5, '0')}`;
   };
@@ -123,10 +131,25 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
     }
   };
 
+  const handlePayBill = (bill: any) => {
+    const total = bill.lines?.reduce((acc: number, l: any) => acc + ((l.quantity || 1) * (l.unitPrice || 0)), 0) || 0;
+    const payload = {
+      vendorId: bill.vendorId,
+      billId: bill.id,
+      amount: total
+    };
+    localStorage.setItem('ams_pending_vendor_payment', JSON.stringify(payload));
+    window.dispatchEvent(new CustomEvent('ams_navigate', { detail: 'Procurement.Vendor Payments' }));
+  };
+
   const saveBill = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!billForm.vendorId) { notify('Please select a vendor.'); return; }
     if (!billForm.vendorInvoiceNumber) { notify('Please enter supplier invoice number.'); return; }
+    if (billForm.dueDate && billForm.date && billForm.dueDate < billForm.date) {
+      notify('⚠️ Due Date cannot be earlier than the Bill Date.');
+      return;
+    }
     const body = {
       purchaseOrderId: entryMode === 'procurement' ? (billForm.purchaseOrderId || null) : null,
       vendorId: billForm.vendorId,
@@ -163,9 +186,26 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
     setMatchModal(res);
   };
 
-  const totalOutstanding = bills.reduce((sum: number, b: any) => sum + (b.lines?.reduce((s: number, l: any) => s + ((l.quantity || 1) * (l.unitPrice || 0)), 0) || 0), 0);
-  const directCount = bills.filter((b: any) => !b.purchaseOrderId).length;
-  const poCount = bills.filter((b: any) => b.purchaseOrderId).length;
+  const isDraftBill = (b: any) => b.status === 0 || b.status === '0' || String(b.status).toLowerCase() === 'draft';
+  const isVoidBill = (b: any) => b.status === 4 || b.status === '4' || String(b.status).toLowerCase() === 'void' || String(b.status).toLowerCase() === 'cancelled';
+  const isPaidBill = (b: any) => b.status === 3 || b.status === '3' || String(b.status).toLowerCase() === 'paid';
+
+  const activeBills = (bills as any[]).filter(b => !isDraftBill(b) && !isVoidBill(b));
+  const openBills = activeBills.filter(b => !isPaidBill(b) && (b.amountDue ?? (b.totalAmount - (b.amountPaid || 0))) > 0);
+  const draftBills = (bills as any[]).filter(b => isDraftBill(b));
+
+  const totalOutstanding = openBills.reduce((sum: number, b: any) => {
+    const due = b.amountDue ?? (b.totalAmount ? (b.totalAmount - (b.amountPaid || 0)) : b.lines?.reduce((s: number, l: any) => s + ((l.quantity || 1) * (l.unitPrice || 0)), 0) || 0);
+    return sum + due;
+  }, 0);
+
+  const draftBillsTotal = draftBills.reduce((sum: number, b: any) => {
+    const tot = b.totalAmount ?? (b.lines?.reduce((s: number, l: any) => s + ((l.quantity || 1) * (l.unitPrice || 0)), 0) || 0);
+    return sum + tot;
+  }, 0);
+
+  const directCount = activeBills.filter((b: any) => !b.purchaseOrderId).length;
+  const poCount = activeBills.filter((b: any) => b.purchaseOrderId).length;
 
   const filteredBills = (bills as any[]).filter((bill: any) => {
     if (!query.trim()) return true;
@@ -221,22 +261,24 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
             exportHeaders={exportHeaders} exportRows={exportRows}
             exportTotals={[{ label: 'Total Outstanding', value: totalOutstanding }]}
             onRefresh={() => { fetchBills(activeEntityId); fetchOrders(activeEntityId); }}
-          />
-          <button onClick={openDirectBill} className="h-10 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text-strong)] hover:bg-[var(--color-surface-muted)] transition-colors flex items-center gap-2">
-            <CreditCard className="w-4 h-4 text-blue-500" /> Direct Bill
-          </button>
-          <button onClick={openPOBill} className="h-10 px-5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-bold shadow-lg shadow-amber-500/25 flex items-center gap-2">
-            <Truck className="w-4 h-4" /> PO Bill
-          </button>
+          >
+            <button onClick={openDirectBill} className="h-10 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text-strong)] hover:bg-[var(--color-surface-muted)] transition-colors flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-blue-500" /> Direct Bill
+            </button>
+            <button onClick={openPOBill} className="h-10 px-5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-bold shadow-lg shadow-amber-500/25 flex items-center gap-2">
+              <Truck className="w-4 h-4" /> PO Bill
+            </button>
+          </DataToolbar>
           </div>
         </div>
       </div>
 
       {/* KPI Cards */}
-      <KpiGrid cols={3}>
-        <KpiCard icon={FileText} label="Total Outstanding" value={money(totalOutstanding)} desc={`${bills.length} bills recorded`} tone="amber" />
-        <KpiCard icon={CreditCard} label="Direct Bills" value={String(directCount)} desc="Posted to AP directly" tone="blue" />
-        <KpiCard icon={Truck} label="PO Linked Bills" value={String(poCount)} desc="3-way match active" tone="emerald" />
+      <KpiGrid cols={4}>
+        <KpiCard icon={FileText} label="Total Outstanding" value={money(totalOutstanding)} desc={`${openBills.length} approved payables`} tone="amber" />
+        <KpiCard icon={FileText} label="Draft Bills" value={String(draftBills.length)} desc={draftBills.length > 0 ? `${money(draftBillsTotal)} pending` : 'Ready for approval'} tone="blue" />
+        <KpiCard icon={CreditCard} label="Direct Bills" value={String(directCount)} desc="Posted to AP directly" tone="emerald" />
+        <KpiCard icon={Truck} label="PO Linked Bills" value={String(poCount)} desc="3-way match active" tone="purple" />
       </KpiGrid>
 
       {/* Bills Table */}
@@ -259,13 +301,13 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
-            {filteredBills.map((bill: any) => {
+            {filteredBills.map((bill: any, idx: number) => {
               const vendor = vendors.find(v => v.id === bill.vendorId);
               const total = bill.lines?.reduce((acc: number, l: any) => acc + ((l.quantity || 1) * (l.unitPrice || 0)), 0) || 0;
               const isDirect = !bill.purchaseOrderId;
               return (
                 <tr key={bill.id} className="hover:bg-[var(--color-surface-muted)]/50 transition-colors">
-                  <td className="px-5 py-3 font-mono font-bold text-[var(--color-text-strong)]">{bill.billNumber}</td>
+                  <td className="px-5 py-3 font-mono font-bold text-[var(--color-text-strong)]">{formatBillNumber(bill.billNumber || bill.reference, idx + 1)}</td>
                   <td className="px-5 py-3"><span className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 font-mono text-[10px] font-bold">{bill.vendorInvoiceNumber || bill.vendorBillNumber}</span></td>
                   <td className="px-5 py-3">
                     {isDirect ? (
@@ -287,6 +329,13 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
                       ) : (
                         <span className="text-[10px] text-[var(--color-text-muted)] font-medium">Direct AP</span>
                       )}
+                      <button
+                        onClick={() => handlePayBill(bill)}
+                        title="Record Payment / Pay Bill"
+                        className="h-7 px-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <CreditCard className="w-3 h-3" /> Pay
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -319,76 +368,161 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
               <button onClick={() => setShowBillModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)] hover:bg-[var(--color-surface-muted)] transition-colors"><X className="w-4 h-4" /></button>
             </div>
 
-            {/* Tabs */}
-            <div className="flex items-center gap-1 px-4 pt-3 border-b border-[var(--color-border)]">
-              {(['details', 'lines', 'preview'] as const).map(tab => (
-                <button key={tab} onClick={() => setModalTab(tab)} className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all ${modalTab === tab ? (tab === 'preview' ? 'border-emerald-600 text-emerald-600 bg-emerald-500/10' : 'border-amber-600 text-amber-600 bg-amber-500/10') : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'}`}>
-                  {tab === 'details' && <><FileText className="w-3 h-3" /> 1. Vendor & Dates</>}
-                  {tab === 'lines' && <><Receipt className="w-3 h-3" /> 2. Line Items ({billLines.length})</>}
-                  {tab === 'preview' && <><Eye className="w-3 h-3" /> Preview & Submit</>}
-                </button>
-              ))}
+            {/* Modal Stepper Navigation */}
+            <div className="erp-stepper-nav">
+              <button
+                type="button"
+                onClick={() => setModalTab('details')}
+                className={`erp-step-pill ${modalTab === 'details' ? 'active' : ''}`}
+              >
+                <span className="erp-step-num">1</span>
+                <FileText className="w-3.5 h-3.5" />
+                <span>Vendor & Dates</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setModalTab('lines')}
+                className={`erp-step-pill ${modalTab === 'lines' ? 'active' : ''}`}
+              >
+                <span className="erp-step-num">2</span>
+                <Receipt className="w-3.5 h-3.5" />
+                <span>Line Items ({billLines.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setModalTab('preview')}
+                className={`erp-step-pill ${modalTab === 'preview' ? 'active' : ''}`}
+              >
+                <span className="erp-step-num">3</span>
+                <Eye className="w-3.5 h-3.5" />
+                <span>Review & Submit</span>
+              </button>
             </div>
 
             {/* Body */}
-            <div className="p-6 md:p-8 overflow-y-auto flex-1">
+            <div className="p-6 md:p-8 overflow-y-auto flex-1 space-y-6">
               {/* TAB: Details */}
               {modalTab === 'details' && (
                 <div className="space-y-5">
                   {entryMode === 'procurement' && (
-                    <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
-                      <label className="block text-xs font-bold text-[var(--color-text-strong)] mb-1.5">Linked Purchase Order</label>
-                      <select value={billForm.purchaseOrderId} onChange={e => handlePOSelect(e.target.value)} className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none">
-                        <option value="">-- Select Purchase Order --</option>
-                        {orders.map((p: any) => (
-                          <option key={p.id} value={p.id}>{p.orderNumber || p.poNumber}</option>
-                        ))}
-                      </select>
+                    <div className="erp-form-card-muted space-y-2">
+                      <label className="erp-form-label">Linked Purchase Order</label>
+                      <CompactSelect
+                        value={billForm.purchaseOrderId}
+                        onChange={v => handlePOSelect(v)}
+                        options={orders.map((p: any) => ({
+                          value: p.id,
+                          label: p.orderNumber || p.poNumber,
+                          badge: p.poNumber
+                        }))}
+                        placeholder="-- Select Purchase Order --"
+                        className="h-10"
+                      />
                     </div>
                   )}
 
                   {entryMode === 'direct' && (
-                    <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/20">
-                      <p className="text-xs font-bold text-blue-600 dark:text-blue-400">Direct AP Liability</p>
-                      <p className="text-[10px] text-[var(--color-text-muted)] mt-1">This bill posts directly to Accounts Payable without a Purchase Order.</p>
+                    <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs">
+                      <p className="font-bold text-blue-600 dark:text-blue-400">Direct AP Liability Entry</p>
+                      <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">This bill posts directly to Accounts Payable ledger without a prior PO.</p>
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-[var(--color-text-strong)] mb-1.5">Vendor / Supplier <span className="text-rose-500">*</span></label>
-                      <select required value={billForm.vendorId} onChange={e => setBillForm({ ...billForm, vendorId: e.target.value })} className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none">
-                        <option value="">-- Select Vendor --</option>
-                        {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                      </select>
+                  <div className="erp-form-card space-y-4">
+                    <div className="border-b border-[var(--color-border)] pb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-amber-500" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-strong)]">Supplier & Invoice Metadata</h4>
+                      </div>
+                      <span className="text-[11px] text-[var(--color-text-muted)] font-medium">Step 1 of 3</span>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-[var(--color-text-strong)] mb-1.5">Supplier Invoice # <span className="text-rose-500">*</span></label>
-                      <input required placeholder="e.g. INV-SUP-9982" value={billForm.vendorInvoiceNumber} onChange={e => setBillForm({ ...billForm, vendorInvoiceNumber: e.target.value })} className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-[var(--color-text-strong)] mb-1.5">System Bill Number</label>
-                      <input value={billForm.billNumber} onChange={e => setBillForm({ ...billForm, billNumber: e.target.value })} className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)] text-xs font-mono font-bold text-[var(--color-text-strong)] outline-none" readOnly />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-[var(--color-text-strong)] mb-1.5">Transaction Currency</label>
-                      <select value={billForm.currencyCode} onChange={e => setBillForm({ ...billForm, currencyCode: e.target.value })} className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none">
-                        {['PKR', 'USD', 'EUR', 'GBP', 'AED', 'SAR', 'CAD', 'AUD'].map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-[var(--color-text-strong)] mb-1.5">Invoice / Bill Date <span className="text-rose-500">*</span></label>
-                      <input type="date" required value={billForm.date} onChange={e => setBillForm({ ...billForm, date: e.target.value })} className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-[var(--color-text-strong)] mb-1.5">Due Date <span className="text-rose-500">*</span></label>
-                      <input type="date" required value={billForm.dueDate} onChange={e => setBillForm({ ...billForm, dueDate: e.target.value })} className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none" />
-                    </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-[var(--color-text-strong)] mb-1.5">Payment Notes</label>
-                    <input placeholder="Payment instructions, bank wire info, or reference tags" value={billForm.notes} onChange={e => setBillForm({ ...billForm, notes: e.target.value })} className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none" />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="erp-form-label">
+                          <span className="text-rose-500 font-bold mr-1">*</span> Vendor / Supplier
+                        </label>
+                        <CompactSelect
+                          value={billForm.vendorId}
+                          onChange={v => setBillForm({ ...billForm, vendorId: v })}
+                          options={vendors.map(v => ({ value: v.id, label: v.name }))}
+                          placeholder="-- Select Vendor --"
+                          className="h-10"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">
+                          <span className="text-rose-500 font-bold mr-1">*</span> Supplier Invoice # / Ref
+                        </label>
+                        <input
+                          required
+                          placeholder="e.g. INV-SUP-9982"
+                          value={billForm.vendorInvoiceNumber}
+                          onChange={e => setBillForm({ ...billForm, vendorInvoiceNumber: e.target.value })}
+                          className="erp-form-input font-mono font-bold"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">System Bill Number</label>
+                        <input
+                          value={billForm.billNumber}
+                          onChange={e => setBillForm({ ...billForm, billNumber: e.target.value })}
+                          className="erp-form-input bg-[var(--color-surface-muted)] font-mono font-bold text-[var(--color-text-strong)]"
+                          readOnly
+                        />
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">Transaction Currency</label>
+                        <CompactSelect
+                          value={billForm.currencyCode}
+                          onChange={c => setBillForm({ ...billForm, currencyCode: c })}
+                          options={['PKR', 'USD', 'EUR', 'GBP', 'AED', 'SAR', 'CAD', 'AUD'].map(c => ({ value: c, label: c }))}
+                          placeholder="Currency"
+                          className="h-10"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">
+                          <span className="text-rose-500 font-bold mr-1">*</span> Invoice / Bill Date
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={billForm.date}
+                          onChange={e => setBillForm({ ...billForm, date: e.target.value })}
+                          className="erp-form-input font-medium"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">
+                          <span className="text-rose-500 font-bold mr-1">*</span> Payment Due Date
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={billForm.dueDate}
+                          onChange={e => setBillForm({ ...billForm, dueDate: e.target.value })}
+                          className="erp-form-input font-medium"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="erp-form-label">Payment & Remittance Notes</label>
+                        <input
+                          placeholder="Payment instructions, bank wire info, or reference tags"
+                          value={billForm.notes}
+                          onChange={e => setBillForm({ ...billForm, notes: e.target.value })}
+                          className="erp-form-input"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -426,11 +560,13 @@ export const VendorBills: React.FC<{ activeEntityId: string }> = ({ activeEntity
                             <tr key={i} className="hover:bg-[var(--color-surface-muted)]/30">
                               <td className="p-2"><input value={l.description} onChange={e => { const u = [...billLines]; u[i].description = e.target.value; setBillLines(u); }} placeholder="Item description" className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none" /></td>
                               {entryMode === 'direct' && (
-                                <td className="p-2">
-                                  <select value={l.accountId} onChange={e => { const u = [...billLines]; u[i].accountId = e.target.value; setBillLines(u); }} className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[10px] outline-none">
-                                    <option value="">Select GL</option>
-                                    {accounts.map(a => <option key={a.id} value={a.id}>{a.code} - {a.name}</option>)}
-                                  </select>
+                                <td className="p-2 min-w-[180px]">
+                                  <CompactSelect
+                                    value={l.accountId}
+                                    onChange={v => { const u = [...billLines]; u[i].accountId = v; setBillLines(u); }}
+                                    options={accounts.map(a => ({ value: a.id, label: `${a.code} - ${a.name}`, badge: a.code }))}
+                                    placeholder="Select GL Account..."
+                                  />
                                 </td>
                               )}
                               <td className="p-2"><input type="number" value={l.quantity} onChange={e => { const u = [...billLines]; u[i].quantity = e.target.value; setBillLines(u); }} className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-center font-mono outline-none" /></td>

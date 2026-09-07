@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Download,
   FileText,
@@ -50,12 +51,46 @@ export const ExportDropdown: React.FC<ExportDropdownProps> = ({
   className = '',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const updateCoords = () => {
+    if (!buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const menuWidth = 288; // w-72 = 288px
+    let left = align === 'right' ? rect.right - menuWidth : rect.left;
+    if (left < 8) left = 8;
+    if (left + menuWidth > window.innerWidth - 8) {
+      left = window.innerWidth - menuWidth - 8;
+    }
+    const top = rect.bottom + 6;
+    setCoords({ top, left });
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      updateCoords();
+      const handleScrollOrResize = () => {
+        updateCoords();
+      };
+      window.addEventListener('scroll', handleScrollOrResize, true);
+      window.addEventListener('resize', handleScrollOrResize);
+      return () => {
+        window.removeEventListener('scroll', handleScrollOrResize, true);
+        window.removeEventListener('resize', handleScrollOrResize);
+      };
+    }
+  }, [isOpen, align]);
 
   // Close when clicking outside
   useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      if (
+        buttonRef.current && !buttonRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
         setIsOpen(false);
       }
     };
@@ -68,10 +103,12 @@ export const ExportDropdown: React.FC<ExportDropdownProps> = ({
 
     if (isOpen) {
       document.addEventListener('mousedown', handleOutsideClick);
+      document.addEventListener('touchstart', handleOutsideClick);
       document.addEventListener('keydown', handleKeyDown);
     }
     return () => {
       document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen]);
@@ -132,17 +169,18 @@ export const ExportDropdown: React.FC<ExportDropdownProps> = ({
 
   const options = customOptions || defaultOptions;
 
-  if (options.length === 0) return null;
-
   return (
-    <div className={`relative inline-block text-left ${className}`} ref={dropdownRef}>
+    <div ref={buttonRef as any} className={`relative inline-block text-left ${className}`}>
       {/* Trigger Button */}
       <Button
         type="button"
         size={size}
         variant={variant === 'default' ? undefined : (variant as any)}
         disabled={disabled}
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          if (!isOpen) updateCoords();
+          setIsOpen(!isOpen);
+        }}
         className={`font-bold text-xs h-9 px-3.5 gap-2 shadow-xs cursor-pointer transition-all ${
           variant === 'default'
             ? 'bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white border border-teal-500/30'
@@ -160,69 +198,76 @@ export const ExportDropdown: React.FC<ExportDropdownProps> = ({
         />
       </Button>
 
-      {/* Modern Popover Hub */}
-      {isOpen && (
-        <div
-          className={`absolute z-50 mt-2 w-72 rounded-2xl border border-border/80 bg-popover/95 backdrop-blur-md shadow-2xl p-2 animate-in fade-in zoom-in-95 duration-150 ${
-            align === 'right' ? 'right-0' : 'left-0'
-          }`}
-        >
-          {/* Header */}
-          <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Sparkles className="w-3 h-3 text-teal-600" /> Export & Share
-            </span>
-            <span className="text-[10px] text-muted-foreground font-mono">
-              {options.length} format{options.length > 1 ? 's' : ''}
-            </span>
-          </div>
+      {/* Modern Popover Hub portaled to body with high z-index to prevent clipping */}
+      {isOpen &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{
+              position: 'fixed',
+              top: `${coords.top}px`,
+              left: `${coords.left}px`,
+              zIndex: 99999,
+            }}
+            className="w-72 rounded-2xl border border-border/80 bg-popover/98 backdrop-blur-xl shadow-2xl p-2 animate-in fade-in zoom-in-95 duration-150 text-popover-foreground"
+          >
+            {/* Header */}
+            <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Sparkles className="w-3 h-3 text-teal-600" /> Export & Share
+              </span>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {options.length} format{options.length > 1 ? 's' : ''}
+              </span>
+            </div>
 
-          {/* Options List */}
-          <div className="py-1 space-y-0.5">
-            {options.map((opt) => {
-              const Icon = opt.icon || Download;
-              return (
-                <button
-                  key={opt.key}
-                  type="button"
-                  disabled={opt.disabled}
-                  onClick={() => {
-                    setIsOpen(false);
-                    opt.onClick();
-                  }}
-                  className="w-full text-left p-2.5 rounded-xl hover:bg-muted/70 active:bg-muted transition-all flex items-start gap-3 cursor-pointer group disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  <div
-                    className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 mt-0.5 transition-transform group-hover:scale-105 ${
-                      opt.iconBg || 'bg-muted border-border text-foreground'
-                    }`}
+            {/* Options List */}
+            <div className="py-1 space-y-0.5">
+              {options.map((opt) => {
+                const Icon = opt.icon || Download;
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    disabled={opt.disabled}
+                    onClick={() => {
+                      setIsOpen(false);
+                      opt.onClick();
+                    }}
+                    className="w-full text-left p-2.5 rounded-xl hover:bg-muted/70 active:bg-muted transition-all flex items-start gap-3 cursor-pointer group disabled:opacity-50 disabled:pointer-events-none"
                   >
-                    <Icon className={`w-4 h-4 ${opt.iconColor || ''}`} />
-                  </div>
+                    <div
+                      className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 mt-0.5 transition-transform group-hover:scale-105 ${
+                        opt.iconBg || 'bg-muted border-border text-foreground'
+                      }`}
+                    >
+                      <Icon className={`w-4 h-4 ${opt.iconColor || ''}`} />
+                    </div>
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1.5">
-                      <span className="text-xs font-bold text-foreground group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors truncate">
-                        {opt.label}
-                      </span>
-                      {opt.extension && (
-                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground shrink-0 border border-border/50">
-                          {opt.extension}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="text-xs font-bold text-foreground group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors truncate">
+                          {opt.label}
                         </span>
+                        {opt.extension && (
+                          <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground shrink-0 border border-border/50">
+                            {opt.extension}
+                          </span>
+                        )}
+                      </div>
+                      {opt.sublabel && (
+                        <p className="text-[10px] text-muted-foreground leading-tight mt-0.5 truncate">
+                          {opt.sublabel}
+                        </p>
                       )}
                     </div>
-                    {opt.sublabel && (
-                      <p className="text-[10px] text-muted-foreground leading-tight mt-0.5 truncate">
-                        {opt.sublabel}
-                      </p>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

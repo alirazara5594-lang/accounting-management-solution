@@ -33,14 +33,59 @@ const formatCurrency = (val: number, currency?: string) => {
   return val < 0 ? `(${formatted})` : formatted; // GAAP standard parentheses for negative balances
 };
 
+export const inferSubtype = (code: string, type: string): string => {
+  if (!code) return '';
+  const num = parseInt(code, 10);
+  
+  if (type === 'Asset' || type === 'ContraAsset') {
+    if (!isNaN(num)) {
+      if (num >= 10000 && num < 15000) return 'Current Assets';
+      if (num >= 15000) return 'Non-Current Assets';
+    }
+    return code.startsWith('11') || code.startsWith('12') || code.startsWith('13') || code.startsWith('14')
+      ? 'Current Assets' : 'Non-Current Assets';
+  }
+  
+  if (type === 'Liability' || type === 'ContraLiability') {
+    if (!isNaN(num)) {
+      if (num >= 20000 && num < 25000) return 'Current Liabilities';
+      if (num >= 25000) return 'Non-Current Liabilities';
+    }
+    return code.startsWith('25') || code.startsWith('26') || code.startsWith('27') || code.startsWith('28')
+      ? 'Non-Current Liabilities' : 'Current Liabilities';
+  }
+  
+  if (type === 'Equity' || type === 'ContraEquity') {
+    if (!isNaN(num) && num >= 30000 && num < 32000) return 'Share Capital & Premium';
+    return 'Retained Earnings & Reserves';
+  }
+  
+  if (type === 'Revenue' || type === 'ContraRevenue') {
+    if (!isNaN(num) && num >= 40000 && num < 42000) return 'Operating Revenue';
+    return 'Non-Operating Revenue';
+  }
+  
+  if (type === 'Expense' || type === 'ContraExpense') {
+    if (!isNaN(num) && num >= 50000 && num < 60000) return 'Cost of Goods Sold';
+    if (!isNaN(num) && num >= 60000 && num < 62000) return 'Operating Expenses';
+    return 'Non-Operating Expenses';
+  }
+  
+  return '';
+};
+
 export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
-  accounts,
+  accounts: propAccounts,
   edit,
   status,
   openCreate,
   setParentIdForNew,
   reloadAccounts
 }) => {
+  // Direct store subscription for real-time reactivity
+  const storeAccounts = useCoaStore(s => s.accounts as Account[]);
+  const accounts = storeAccounts.length > 0 ? storeAccounts : propAccounts;
+
   // Store subscriptions
   const journalEntries = useJournalsStore(s => s.entries);
   const fetchJournalEntries = useJournalsStore(s => s.fetchJournalEntries);
@@ -142,7 +187,7 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
 
   // Derive unique subtypes and header accounts for filter dropdowns
   const allSubtypes = useMemo(() => {
-    const subs = accounts.map(a => a.subtype).filter(Boolean) as string[];
+    const subs = accounts.map(a => a.subtype || inferSubtype(a.code, a.type)).filter(Boolean) as string[];
     return Array.from(new Set(subs)).sort();
   }, [accounts]);
 
@@ -177,7 +222,7 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
       
       // 4. Subtype Filter
       if (selectedSubtype !== 'All') {
-        const sub = a.subtype || 'General';
+        const sub = a.subtype || inferSubtype(a.code, a.type) || 'General';
         if (sub !== selectedSubtype) return false;
       }
 
@@ -428,7 +473,10 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
     if (!selectedGLAccountId || !glAccount) return [];
     
     const lines: any[] = [];
-    const posted = journalEntries.filter(e => String(e.status) === 'Posted' || String(e.status) === '3');
+    const posted = journalEntries.filter(e => {
+      const s = String(e.status || '').toLowerCase();
+      return s === 'posted' || s === '3' || s === 'reversed' || s === '4' || !e.status;
+    });
 
     posted.forEach(entry => {
       entry.lines?.forEach(line => {
@@ -461,6 +509,16 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
       return { ...l, runningBalance: running };
     });
   }, [selectedGLAccountId, glAccount, journalEntries]);
+
+  const reversedGLRefsSet = useMemo(() => {
+    const set = new Set<string>();
+    journalEntries.forEach(e => {
+      if (e.reference && e.reference.startsWith('REV-')) {
+        set.add(e.reference.replace('REV-', ''));
+      }
+    });
+    return set;
+  }, [journalEntries]);
 
   // Filtered GL lines based on text query
   const filteredGLLines = useMemo(() => {
@@ -511,7 +569,7 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
     };
     
     const theme = colorMap[baseType] || { bg: 'bg-slate-50 text-slate-700 border-slate-200/50', text: 'text-slate-700 border-slate-200/50', border: 'border-slate-200/50' };
-    const displaySubtype = acc.isPosting ? (acc.subtype || 'General') : 'Header';
+    const displaySubtype = acc.subtype || inferSubtype(acc.code, acc.type) || (acc.isPosting ? 'General' : 'Header');
 
     return (
       <TableRow
@@ -648,6 +706,8 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
 
   // DRILL-DOWN SUMMARY CALCULATIONS
   const drillDownData = useMemo(() => {
+    const getSub = (a: Account) => a.subtype || inferSubtype(a.code, a.type) || 'General';
+
     // 1. Level 1: Main Heads
     if (!selectedMainHead) {
       const heads = [
@@ -665,17 +725,17 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
         let current = 0;
         let count = 0;
 
-        accounts.forEach(a => {
-          if (h.typeKeys.includes(a.type)) {
-            if (a.isPosting) count++;
-            if (!a.parentId) {
-              const rec = getAccountBalancesRecursive(a.id);
-              opening += rec.opening;
-              debits += rec.debits;
-              credits += rec.credits;
-              current += rec.current;
-            }
-          }
+        const categoryAccounts = accounts.filter(a => h.typeKeys.includes(a.type));
+        count = categoryAccounts.length;
+
+        // Group root/top accounts for recursive hierarchy balance calculation
+        const rootCategoryAccounts = categoryAccounts.filter(a => !a.parentId || !accounts.some(p => p.id === a.parentId));
+        rootCategoryAccounts.forEach(a => {
+          const rec = getAccountBalancesRecursive(a.id);
+          opening += rec.opening;
+          debits += rec.debits;
+          credits += rec.credits;
+          current += rec.current;
         });
 
         return {
@@ -697,8 +757,8 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
                        selectedMainHead === 'Equity' ? ['Equity', 'ContraEquity'] :
                        selectedMainHead === 'Revenue' ? ['Revenue', 'ContraRevenue'] : ['Expense', 'ContraExpense'];
 
-      // Find unique subtypes in this category
-      const uniqueSubtypes = Array.from(new Set(accounts.filter(a => typeKeys.includes(a.type)).map(a => a.subtype || 'General')));
+      const categoryAccounts = accounts.filter(a => typeKeys.includes(a.type));
+      const uniqueSubtypes = Array.from(new Set(categoryAccounts.map(getSub))).sort();
 
       return uniqueSubtypes.map(sub => {
         let opening = 0;
@@ -707,17 +767,14 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
         let current = 0;
         let count = 0;
 
-        accounts.forEach(a => {
-          if (typeKeys.includes(a.type) && (a.subtype || 'General') === sub) {
-            if (a.isPosting) {
-              count++;
-              const direct = accountBalances[a.id] || { debits: 0, credits: 0, net: a.openingBalance };
-              opening += a.openingBalance;
-              debits += direct.debits;
-              credits += direct.credits;
-              current += direct.net;
-            }
-          }
+        const subAccounts = categoryAccounts.filter(a => getSub(a) === sub);
+        subAccounts.forEach(a => {
+          count++;
+          const direct = accountBalances[a.id] || { debits: 0, credits: 0, net: a.openingBalance };
+          opening += Number(a.openingBalance) || 0;
+          debits += direct.debits || 0;
+          credits += direct.credits || 0;
+          current += direct.net || 0;
         });
 
         return {
@@ -732,30 +789,29 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
       });
     }
 
-    // 3. Level 3: Posting Accounts
+    // 3. Level 3: Posting Accounts & Ledgers
     if (selectedMainHead && selectedSubHead) {
       const typeKeys = selectedMainHead === 'Assets' ? ['Asset', 'ContraAsset'] :
                        selectedMainHead === 'Liabilities' ? ['Liability', 'ContraLiability'] :
                        selectedMainHead === 'Equity' ? ['Equity', 'ContraEquity'] :
                        selectedMainHead === 'Revenue' ? ['Revenue', 'ContraRevenue'] : ['Expense', 'ContraExpense'];
 
-      const leafAccounts = accounts.filter(a => 
+      const matchedAccounts = accounts.filter(a => 
         typeKeys.includes(a.type) && 
-        (a.subtype || 'General') === selectedSubHead &&
-        a.isPosting
-      );
+        getSub(a) === selectedSubHead
+      ).sort((a, b) => a.code.localeCompare(b.code));
 
-      return leafAccounts.map(a => {
+      return matchedAccounts.map(a => {
         const direct = accountBalances[a.id] || { debits: 0, credits: 0, net: a.openingBalance };
         return {
           key: a.id,
           code: a.code,
           name: a.name,
-          normalBalance: a.normalBalance,
-          opening: a.openingBalance,
-          debits: direct.debits,
-          credits: direct.credits,
-          current: direct.net
+          normalBalance: a.normalBalance || (['Asset', 'Expense', 'ContraLiability', 'ContraEquity', 'ContraRevenue'].includes(a.type) ? 'Debit' : 'Credit'),
+          opening: Number(a.openingBalance) || 0,
+          debits: direct.debits || 0,
+          credits: direct.credits || 0,
+          current: direct.net || 0
         };
       });
     }
@@ -1289,25 +1345,49 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({
                     <TableCell className="py-2.5 text-right font-bold">{formatCurrency(glAccount.openingBalance)}</TableCell>
                     <TableCell className="py-2.5 text-center">—</TableCell>
                   </TableRow>
-                  {filteredGLLines.map((line, idx) => (
-                    <TableRow key={idx} className="hover:bg-slate-50/50">
-                      <TableCell className="py-2.5 text-slate-500">{line.date}</TableCell>
-                      <TableCell className="py-2.5 font-bold text-slate-700">{line.reference}</TableCell>
-                      <TableCell className="py-2.5 font-sans text-slate-600 max-w-[200px] truncate" title={line.description}>{line.description}</TableCell>
-                      <TableCell className="py-2.5 text-right text-emerald-600 font-semibold">{line.debit > 0 ? formatCurrency(line.debit) : '—'}</TableCell>
-                      <TableCell className="py-2.5 text-right text-rose-600 font-semibold">{line.credit > 0 ? formatCurrency(line.credit) : '—'}</TableCell>
-                      <TableCell className="py-2.5 text-right font-bold text-slate-800">{formatCurrency(line.runningBalance)}</TableCell>
-                      <TableCell className="py-2.5 text-center">
-                        <button
-                          onClick={() => setActiveSourceTx(line.entry)}
-                          className="p-1 hover:bg-blue-50 text-blue-600 rounded cursor-pointer"
-                          title="Audit Source Transaction Document"
-                        >
-                          <Shield size={12.5} />
-                        </button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {filteredGLLines.map((line, idx) => {
+                    const isRev = line.reference?.startsWith('REV-');
+                    const isCancelled = line.reference && reversedGLRefsSet.has(line.reference);
+                    return (
+                      <TableRow key={idx} className={`transition-colors ${isRev ? 'bg-rose-50/50 hover:bg-rose-50' : isCancelled ? 'bg-amber-50/40 hover:bg-amber-50' : 'hover:bg-slate-50/50'}`}>
+                        <TableCell className="py-2.5 text-slate-500">{line.date}</TableCell>
+                        <TableCell className="py-2.5">
+                          {isRev ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-bold text-rose-600 flex items-center gap-1">
+                                <span className="bg-rose-100 text-rose-700 text-[8px] font-black px-1 rounded">REV</span>
+                                {line.reference}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-sans">Reverses: {line.reference.replace('REV-', '')}</span>
+                            </div>
+                          ) : isCancelled ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-bold text-slate-700 flex items-center gap-1">
+                                <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1 rounded">VOID</span>
+                                {line.reference}
+                              </span>
+                              <span className="text-[9px] text-amber-600 font-sans">Reversed by REV-{line.reference}</span>
+                            </div>
+                          ) : (
+                            <span className="font-bold text-slate-700">{line.reference}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="py-2.5 font-sans text-slate-600 max-w-[200px] truncate" title={line.description}>{line.description}</TableCell>
+                        <TableCell className="py-2.5 text-right text-emerald-600 font-semibold">{line.debit > 0 ? formatCurrency(line.debit) : '—'}</TableCell>
+                        <TableCell className="py-2.5 text-right text-rose-600 font-semibold">{line.credit > 0 ? formatCurrency(line.credit) : '—'}</TableCell>
+                        <TableCell className="py-2.5 text-right font-bold text-slate-800">{formatCurrency(line.runningBalance)}</TableCell>
+                        <TableCell className="py-2.5 text-center">
+                          <button
+                            onClick={() => setActiveSourceTx(line.entry)}
+                            className="p-1 hover:bg-blue-50 text-blue-600 rounded cursor-pointer"
+                            title="Audit Source Transaction Document"
+                          >
+                            <Shield size={12.5} />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                   {filteredGLLines.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={7} className="py-8 text-center text-slate-400 font-sans">

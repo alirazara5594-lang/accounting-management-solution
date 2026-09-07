@@ -10,6 +10,7 @@ interface ProductsState {
   fetchNextCode: () => Promise<string>;
   saveProduct: (data: any, id?: string) => Promise<Product>;
   deleteProduct: (id: string) => Promise<void>;
+  setProductPurpose: (id: string, purpose: string) => Promise<Product>;
 }
 
 export const useProductsStore = create<ProductsState>((set, get) => ({
@@ -57,6 +58,18 @@ export const useProductsStore = create<ProductsState>((set, get) => ({
       await get().fetchProducts();
     } catch (err: any) {
       set({ error: err.message || 'Failed to delete product', loading: false });
+      throw err;
+    }
+  },
+
+  setProductPurpose: async (id: string, purpose: string) => {
+    set({ loading: true, error: null });
+    try {
+      const updated = await productsApi.setProductPurpose(id, purpose);
+      await get().fetchProducts();
+      return updated;
+    } catch (err: any) {
+      set({ error: err.message || 'Failed to update product purpose', loading: false });
       throw err;
     }
   },

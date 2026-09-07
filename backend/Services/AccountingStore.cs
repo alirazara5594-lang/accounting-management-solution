@@ -91,6 +91,7 @@ private readonly List<Voucher> _vouchers = [];
     private readonly List<AuditItem> _auditLog = [];
     private readonly Dictionary<Guid, List<AuditItem>> _history = [];
     private readonly object _lock = new();
+    private readonly object _persistLock = new();
     private readonly IConfiguration _config;
     private readonly PayrollCountry _activeCountry;
 
@@ -283,8 +284,9 @@ List<ExpenseClaim>? ExpenseClaims = null,
         var revenue = Seed("40000", "Revenue", AccountType.Revenue, null);
         var operatingRevenue = Seed("41000", "Operating Revenue", AccountType.Revenue, revenue.Id);
         Seed("41100", "Sales Revenue", AccountType.Revenue, operatingRevenue.Id, true, 0, false);
-        Seed("41200", "Sales Discounts", AccountType.Revenue, operatingRevenue.Id, true, 0, false);
-        Seed("41300", "Sales Returns & Allowances", AccountType.ContraRevenue, operatingRevenue.Id, true, 0, false);
+        Seed("41200", "Service Revenue", AccountType.Revenue, operatingRevenue.Id, true, 0, false);
+        Seed("41300", "Sales Discounts", AccountType.ContraRevenue, operatingRevenue.Id, true, 0, false);
+        Seed("41400", "Sales Returns & Allowances", AccountType.ContraRevenue, operatingRevenue.Id, true, 0, false);
         Seed("42000", "Non-Operating Revenue", AccountType.Revenue, revenue.Id, false, 0, false);
 
         // 5. Cost of Goods Sold (Structural Headers: System = True; Leaf Posting: System = False)
@@ -304,7 +306,8 @@ List<ExpenseClaim>? ExpenseClaims = null,
         Seed("61250", "Employer Statutory Payroll Contributions", AccountType.Expense, operatingExpenses.Id, true, 0, false);
         Seed("61260", "End of Service & Gratuity Expense", AccountType.Expense, operatingExpenses.Id, true, 0, false);
         Seed("61300", "Depreciation Expense", AccountType.Expense, operatingExpenses.Id, true, 0, false);
-        Seed("61400", "Bad Debt Expense", AccountType.Expense, operatingExpenses.Id, true, 0, false);
+        Seed("61400", "Interest Expense", AccountType.Expense, operatingExpenses.Id, true, 0, false);
+        Seed("61410", "Bad Debt Expense", AccountType.Expense, operatingExpenses.Id, true, 0, false);
         Seed("61500", "Intercompany Allocations", AccountType.Expense, operatingExpenses.Id, true, 0, false);
         Seed("61600", "Overhead Allocation", AccountType.Expense, operatingExpenses.Id, true, 0, false);
         Seed("61700", "Non-Recoverable Purchase Tax & Duty Expense", AccountType.Expense, operatingExpenses.Id, true, 0, false);
@@ -318,6 +321,8 @@ List<ExpenseClaim>? ExpenseClaims = null,
             lock (_lock)
             {
                 EnsureRequiredPayrollAccounts();
+                FixIncorrectMappings();
+                CorrectMispostedRevenueLines();
                 foreach (var a in _accounts)
                 {
                     a.IsSystem = _mappings.Any(m => m.AccountId == a.Id);
@@ -510,13 +515,13 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
     public string NextVendorPaymentNumber()
     {
         var numbers = _vendorPayments.Select(p => p.PaymentNumber).Where(n => n.StartsWith("PAY-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0);
-        return $"PAY-{(numbers.Max() + 1):D4}";
+        return $"PAY-{(numbers.Max() + 1):D5}";
     }
 
     public string NextFundTransferNumber()
     {
         var numbers = _fundTransfers.Select(t => t.TransferNumber).Where(n => n.StartsWith("TRF-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0);
-        return $"TRF-{(numbers.Max() + 1):D4}";
+        return $"TRF-{(numbers.Max() + 1):D5}";
     }
 
     /// <summary>Returns the first active posting Cash/Bank account (child of 11100 or 11200) as default deposit/disbursement target.</summary>
@@ -1075,6 +1080,12 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 _entries.Add(journal);
                 selectedClaim.JournalEntryId = journal.Id;
             }
+            else if (status != ExpenseClaimStatus.Paid && selectedClaim.Status == ExpenseClaimStatus.Paid && selectedClaim.JournalEntryId != null)
+            {
+                // Reversal of reimbursement journal
+                ExecuteJournalReversal(selectedClaim.ClaimNumber, "REV", $"Reversal of cancelled expense claim reimbursement {selectedClaim.ClaimNumber}", selectedClaim.CompanyId);
+                selectedClaim.JournalEntryId = null;
+            }
 
             claim.Status = status;
             claim.UpdatedAt = DateTime.UtcNow;
@@ -1276,13 +1287,13 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
     public string NextBomNumber()
     {
         var numbers = _boms.Select(b => b.BomNumber).Where(n => n.StartsWith("BOM-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0);
-        return $"BOM-{(numbers.Max() + 1):D4}";
+        return $"BOM-{(numbers.Max() + 1):D5}";
     }
 
     public string NextWorkOrderNumber()
     {
         var numbers = _workOrders.Select(w => w.WorkOrderNumber).Where(n => n.StartsWith("WO-") && int.TryParse(n[3..], out _)).Select(n => int.Parse(n[3..])).DefaultIfEmpty(0);
-        return $"WO-{(numbers.Max() + 1):D4}";
+        return $"WO-{(numbers.Max() + 1):D5}";
     }
 
     public BillOfMaterials CreateBom(BillOfMaterials bom)
@@ -1418,7 +1429,8 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 Guid.TryParse(wo.CompanyId, out var compId);
 
                 var product = _products.FirstOrDefault(p => p.Id == prodId);
-                var unitCost = product?.CostPrice ?? 10m;
+                var level = _stockLevels.FirstOrDefault(sl => sl.ProductId == prodId && sl.WarehouseId == whId);
+                var unitCost = level != null && level.MovingAverageCost > 0 ? level.MovingAverageCost : (product?.CostPrice ?? 10m);
                 var reqQty = line.QuantityRequired * wo.QuantityToProduce;
                 line.QuantityIssued = reqQty;
                 line.UnitCost = unitCost;
@@ -1440,10 +1452,13 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 _stockTransactions.Add(txn);
 
                 // Update Stock Level
-                var level = _stockLevels.FirstOrDefault(sl => sl.ProductId == prodId && sl.WarehouseId == whId);
                 if (level is not null)
                 {
                     level.QuantityOnHand = Math.Max(0, level.QuantityOnHand - reqQty);
+                }
+                if (product is not null)
+                {
+                    product.QuantityOnHand = _stockLevels.Where(sl => sl.ProductId == prodId).Sum(sl => sl.QuantityOnHand);
                 }
             }
 
@@ -1608,11 +1623,12 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 level.MovingAverageCost = level.QuantityOnHand > 0 ? Math.Round(totalVal / level.QuantityOnHand, 2) : wo.UnitCost;
             }
 
-            // Update Finished Product Cost Price
+            // Update Finished Product Cost Price and Stock
             var finishedProduct = _products.FirstOrDefault(p => p.Id == finishedProdId);
             if (finishedProduct is not null)
             {
                 finishedProduct.CostPrice = wo.UnitCost;
+                finishedProduct.QuantityOnHand = _stockLevels.Where(sl => sl.ProductId == finishedProdId).Sum(sl => sl.QuantityOnHand);
             }
 
             // Reset Machine Status to Operating in Fixed Assets
@@ -1632,10 +1648,10 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             // Post Finished Goods journal: Dr Finished Goods / Cr WIP + Direct Labor + Manufacturing Overhead
             if (wo.TotalCost > 0)
             {
-                var fgAccId = GetMappedAccount("Finished Goods Inventory");
-                var wipAccId = GetMappedAccount("Work in Progress");
-                var laborAccId = GetMappedAccount("Direct Labor");
-                var overheadAccId = GetMappedAccount("Manufacturing Overhead");
+                var fgAccId = GetMappedAccount("Finished Goods Inventory") != Guid.Empty ? GetMappedAccount("Finished Goods Inventory") : _accounts.FirstOrDefault(a => a.Code == "13000" || a.Code == "1300")?.Id ?? Guid.Empty;
+                var wipAccId = GetMappedAccount("Work in Progress") != Guid.Empty ? GetMappedAccount("Work in Progress") : _accounts.FirstOrDefault(a => a.Code == "13100" || a.Code == "1310")?.Id ?? Guid.Empty;
+                var laborAccId = GetMappedAccount("Direct Labor") != Guid.Empty ? GetMappedAccount("Direct Labor") : _accounts.FirstOrDefault(a => a.Code == "61200" || a.Code == "50000")?.Id ?? Guid.Empty;
+                var overheadAccId = GetMappedAccount("Manufacturing Overhead") != Guid.Empty ? GetMappedAccount("Manufacturing Overhead") : _accounts.FirstOrDefault(a => a.Code == "50000" || a.Code == "61250")?.Id ?? Guid.Empty;
                 Guid.TryParse(wo.CompanyId, out var woCompId);
                 var fgLines = new List<JournalLine>();
                 if (fgAccId != Guid.Empty)
@@ -1654,7 +1670,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                     _entries.Add(new JournalEntry
                     {
                         Date = DateOnly.FromDateTime(DateTime.Today),
-                        Reference = $"WO-COMPLETE-{wo.WorkOrderNumber}",
+                        Reference = GenerateNextJournalReference(),
                         Description = $"Finished goods capitalization for {wo.WorkOrderNumber}",
                         TransactionType = TransactionType.Inventory,
                         CompanyId = woCompId != Guid.Empty ? woCompId : null,
@@ -1682,7 +1698,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             if (string.IsNullOrWhiteSpace(pr.RequestNumber))
             {
                 var max = _prs.Select(p => p.RequestNumber).Where(n => n.StartsWith("PR-") && int.TryParse(n[3..], out _)).Select(n => int.Parse(n[3..])).DefaultIfEmpty(0).Max();
-                pr.RequestNumber = $"PR-{(max + 1):D4}";
+                pr.RequestNumber = $"PR-{(max + 1):D5}";
             }
             _prs.Add(pr);
             Persist();
@@ -1697,7 +1713,12 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             if (string.IsNullOrWhiteSpace(rfq.RfqNumber))
             {
                 var max = _rfqs.Select(r => r.RfqNumber).Where(n => n.StartsWith("RFQ-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0).Max();
-                rfq.RfqNumber = $"RFQ-{(max + 1):D4}";
+                rfq.RfqNumber = $"RFQ-{(max + 1):D5}";
+            }
+            if (rfq.PurchaseRequestId.HasValue)
+            {
+                var pr = _prs.FirstOrDefault(x => x.Id == rfq.PurchaseRequestId.Value);
+                if (pr != null) pr.Status = PurchaseRequestStatus.Ordered;
             }
             _rfqs.Add(rfq);
             Persist();
@@ -1737,7 +1758,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             var maxPo = _purchaseOrders.Select(p => p.PoNumber).Where(n => n.StartsWith("PO-") && int.TryParse(n[3..], out _)).Select(n => int.Parse(n[3..])).DefaultIfEmpty(0).Max();
             var po = new PurchaseOrder
             {
-                PoNumber = $"PO-{(maxPo + 1):D4}",
+                PoNumber = $"PO-{(maxPo + 1):D5}",
                 VendorId = quote.VendorId,
                 VendorQuoteId = quote.Id,
                 Date = DateOnly.FromDateTime(DateTime.Today),
@@ -1768,7 +1789,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             if (string.IsNullOrWhiteSpace(grn.GrnNumber))
             {
                 var max = _grnModels.Select(g => g.GrnNumber).Where(n => n.StartsWith("GRN-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0).Max();
-                grn.GrnNumber = $"GRN-{(max + 1):D4}";
+                grn.GrnNumber = $"GRN-{(max + 1):D5}";
             }
 
             foreach (var line in grn.Lines)
@@ -1777,8 +1798,36 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 Guid.TryParse(grn.TargetWarehouseId, out var whId);
                 Guid.TryParse(grn.CompanyId, out var compId);
 
+                // Auto-provision Product if missing so item flows seamlessly into Inventory and Products Catalog
+                var product = prodId != Guid.Empty ? FindProduct(prodId) : null;
+                if (product == null && (line.Destination == LineDestination.Inventory || line.Destination == LineDestination.ManufacturingMaterial))
+                {
+                    var newPurpose = line.Destination == LineDestination.ManufacturingMaterial ? ProductPurpose.RawMaterial : ProductPurpose.FinishedGood;
+                    product = new Product
+                    {
+                        Code = NextProductCode(),
+                        Name = !string.IsNullOrWhiteSpace(line.Description) ? line.Description.Trim() : "Inventory Item",
+                        Type = ProductType.Physical,
+                        Purpose = newPurpose,
+                        Unit = "Each",
+                        CostPrice = line.UnitCost,
+                        UnitPrice = line.UnitCost > 0 ? Math.Round(line.UnitCost * 1.35m, 2) : 0m,
+                        Status = ProductStatus.Active,
+                        QuantityOnHand = 0m
+                    };
+                    _products.Add(product);
+                    prodId = product.Id;
+                    line.ProductId = prodId.ToString();
+                }
+
                 if (line.Destination == LineDestination.Inventory || line.Destination == LineDestination.ManufacturingMaterial)
                 {
+                    if (whId == Guid.Empty)
+                    {
+                        var defaultWh = _warehouses.FirstOrDefault(w => w.CompanyId == compId) ?? _warehouses.FirstOrDefault();
+                        if (defaultWh != null) whId = defaultWh.Id;
+                    }
+
                     var txn = new StockTransaction
                     {
                         Date = DateOnly.FromDateTime(DateTime.Today),
@@ -1811,6 +1860,12 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                         level.QuantityOnHand += line.ReceivedQuantity;
                         level.MovingAverageCost = level.QuantityOnHand > 0 ? Math.Round(totVal / level.QuantityOnHand, 2) : line.UnitCost;
                     }
+
+                    if (product != null)
+                    {
+                        product.QuantityOnHand = _stockLevels.Where(sl => sl.ProductId == product.Id).Sum(sl => sl.QuantityOnHand);
+                        if (product.CostPrice <= 0) product.CostPrice = line.UnitCost;
+                    }
                 }
                 else if (line.Destination == LineDestination.FixedAsset)
                 {
@@ -1818,9 +1873,12 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                     {
                         AssetTag = $"FA-{(_fixedAssets.Count + 1):D4}",
                         Name = line.Description,
+                        Category = "Plant & Machinery",
+                        CostAllocation = DepreciationAllocation.ManufacturingOverhead,
+                        MachineHealth = MachineStatus.Operating,
                         PurchaseDate = DateOnly.FromDateTime(DateTime.Today),
                         PurchasePrice = line.ReceivedQuantity * line.UnitCost,
-                        UsefulLifeYears = 3,
+                        UsefulLifeYears = 5,
                         SalvageValue = 0,
                         Status = AssetStatus.Active,
                         CompanyId = compId != Guid.Empty ? compId : null
@@ -1882,8 +1940,12 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         {
             if (string.IsNullOrWhiteSpace(bill.BillNumber))
             {
-                var max = _vendorBills.Select(b => b.BillNumber).Where(n => n.StartsWith("BILL-") && int.TryParse(n[5..], out _)).Select(n => int.Parse(n[5..])).DefaultIfEmpty(0).Max();
-                bill.BillNumber = $"BILL-{(max + 1):D4}";
+                var max = _vendorBills
+                    .Where(b => !string.IsNullOrWhiteSpace(b.BillNumber) && b.BillNumber.StartsWith("BILL-", StringComparison.OrdinalIgnoreCase))
+                    .Select(b => int.TryParse(b.BillNumber[5..], out var val) ? val : 0)
+                    .DefaultIfEmpty(0)
+                    .Max();
+                bill.BillNumber = $"BILL-{(max + 1):D5}";
             }
             bill.Status = VendorBillStatus.Draft;
             _vendorBills.Add(bill);
@@ -1936,23 +1998,31 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             }
 
             var journalLines = new List<JournalLine>();
+            bool isReceivedViaGrn = bill.PurchaseOrderId.HasValue &&
+                (_grnModels.Any(g => g.PurchaseOrderId == bill.PurchaseOrderId.Value.ToString()) ||
+                 _grns.Any(g => g.PurchaseOrderId == bill.PurchaseOrderId.Value));
+            var grniAccId = isReceivedViaGrn ? GetMappedAccount("GRNI Accrual") : Guid.Empty;
+
             foreach (var line in bill.Lines)
             {
                 var subTotal = line.Quantity * line.UnitPrice;
                 if (subTotal <= 0) continue;
 
-                var debitAccId = line.Destination switch
-                {
-                    LineDestination.Inventory or LineDestination.ManufacturingMaterial => GetMappedAccount("Inventory"),
-                    LineDestination.FixedAsset => GetMappedAccount("Fixed Assets"),
-                    _ => GetMappedAccount("Purchases")
-                };
+                var debitAccId = grniAccId != Guid.Empty
+                    ? grniAccId
+                    : line.Destination switch
+                    {
+                        LineDestination.Inventory or LineDestination.ManufacturingMaterial => GetMappedAccount("Inventory"),
+                        LineDestination.FixedAsset => GetMappedAccount("Fixed Assets"),
+                        _ => GetMappedAccount("Purchases")
+                    };
                 if (debitAccId == Guid.Empty)
                 {
                     error = $"Expense/Asset account for destination '{line.Destination}' is not mapped under System Account Mapping.";
                     return false;
                 }
-                journalLines.Add(new JournalLine(debitAccId, subTotal, 0, $"Purchase: {line.Description}", null, null, 1, bill.CompanyId));
+                var lineDesc = grniAccId != Guid.Empty ? $"Clear GRNI Accrual: {line.Description}" : $"Purchase: {line.Description}";
+                journalLines.Add(new JournalLine(debitAccId, subTotal, 0, lineDesc, null, null, 1, bill.CompanyId));
 
                 if (line.TaxAmount > 0)
                 {
@@ -2133,7 +2203,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         if (!string.IsNullOrWhiteSpace(request.Code) && _products.Any(x => x.Code.Equals(request.Code.Trim(), StringComparison.OrdinalIgnoreCase))) { error = "A product with this code already exists."; return false; }
         lock (_lock)
         {
-            product = new Product { Code = string.IsNullOrWhiteSpace(request.Code) ? NextProductCode() : request.Code.Trim(), Name = request.Name.Trim(), Description = request.Description?.Trim(), Type = request.Type, Category = request.Category?.Trim(), Unit = string.IsNullOrWhiteSpace(request.Unit) ? "Each" : request.Unit.Trim(), UnitPrice = request.UnitPrice < 0 ? 0m : request.UnitPrice, CostPrice = request.CostPrice < 0 ? 0m : request.CostPrice, TaxCodeId = request.TaxCodeId, IncomeAccountId = request.IncomeAccountId, ExpenseAccountId = request.ExpenseAccountId, AssetAccountId = request.AssetAccountId };
+            product = new Product { Code = string.IsNullOrWhiteSpace(request.Code) ? NextProductCode() : request.Code.Trim(), Name = request.Name.Trim(), Description = request.Description?.Trim(), Type = request.Type, Purpose = request.Purpose, Category = request.Category?.Trim(), Unit = string.IsNullOrWhiteSpace(request.Unit) ? "Each" : request.Unit.Trim(), UnitPrice = request.UnitPrice < 0 ? 0m : request.UnitPrice, CostPrice = request.CostPrice < 0 ? 0m : request.CostPrice, MinimumQuantity = request.MinimumQuantity < 0 ? 0m : request.MinimumQuantity, TaxCodeId = request.TaxCodeId, IncomeAccountId = request.IncomeAccountId, ExpenseAccountId = request.ExpenseAccountId, AssetAccountId = request.AssetAccountId };
             _products.Add(product); Persist(); return true;
         }
     }
@@ -2145,11 +2215,12 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         {
             product = FindProduct(id); if (product is null) { error = "Product not found."; return false; }
             if (!string.IsNullOrWhiteSpace(request.Code) && _products.Any(x => x.Id != id && x.Code.Equals(request.Code.Trim(), StringComparison.OrdinalIgnoreCase))) { error = "Another product with this code already exists."; return false; }
-            product.Code = string.IsNullOrWhiteSpace(request.Code) ? product.Code : request.Code.Trim(); product.Name = request.Name.Trim(); product.Description = request.Description?.Trim(); product.Type = request.Type; product.Category = request.Category?.Trim(); product.Unit = string.IsNullOrWhiteSpace(request.Unit) ? "Each" : request.Unit.Trim(); product.UnitPrice = request.UnitPrice < 0 ? 0m : request.UnitPrice; product.CostPrice = request.CostPrice < 0 ? 0m : request.CostPrice; product.TaxCodeId = request.TaxCodeId; product.IncomeAccountId = request.IncomeAccountId; product.ExpenseAccountId = request.ExpenseAccountId; product.AssetAccountId = request.AssetAccountId; product.UpdatedAt = DateTime.UtcNow;
+            product.Code = string.IsNullOrWhiteSpace(request.Code) ? product.Code : request.Code.Trim(); product.Name = request.Name.Trim(); product.Description = request.Description?.Trim(); product.Type = request.Type; product.Purpose = request.Purpose; product.Category = request.Category?.Trim(); product.Unit = string.IsNullOrWhiteSpace(request.Unit) ? "Each" : request.Unit.Trim(); product.UnitPrice = request.UnitPrice < 0 ? 0m : request.UnitPrice; product.CostPrice = request.CostPrice < 0 ? 0m : request.CostPrice; product.MinimumQuantity = request.MinimumQuantity < 0 ? 0m : request.MinimumQuantity; product.TaxCodeId = request.TaxCodeId; product.IncomeAccountId = request.IncomeAccountId; product.ExpenseAccountId = request.ExpenseAccountId; product.AssetAccountId = request.AssetAccountId; product.UpdatedAt = DateTime.UtcNow;
             Persist(); return true;
         }
     }
     public bool SetProductStatus(Guid id, ProductStatus status, out string? error) { error = null; lock (_lock) { var product = FindProduct(id); if (product is null) { error = "Product not found."; return false; } product.Status = status; product.UpdatedAt = DateTime.UtcNow; Persist(); return true; } }
+    public bool SetProductPurpose(Guid id, ProductPurpose purpose, out string? error) { error = null; lock (_lock) { var product = FindProduct(id); if (product is null) { error = "Product not found."; return false; } product.Purpose = purpose; product.UpdatedAt = DateTime.UtcNow; Persist(); return true; } }
     public bool DeleteProduct(Guid id, out string? error) { error = null; lock (_lock) { var product = FindProduct(id); if (product is null) { error = "Product not found."; return false; } _products.Remove(product); Persist(); return true; } }
 
     public Vendor? FindVendor(Guid id) => _vendors.FirstOrDefault(x => x.Id == id);
@@ -2178,7 +2249,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
     public bool DeleteVendor(Guid id, out string? error) { error = null; lock (_lock) { var vendor = FindVendor(id); if (vendor is null) { error = "Vendor not found."; return false; } _vendors.Remove(vendor); Persist(); return true; } }
 
     public PurchaseOrder? FindPurchaseOrder(Guid id) => _purchaseOrders.FirstOrDefault(x => x.Id == id);
-    public string NextPoNumber() { var numbers = _purchaseOrders.Select(c => c.PoNumber).Where(n => n.StartsWith("PO-") && int.TryParse(n[3..], out _)).Select(n => int.Parse(n[3..])).DefaultIfEmpty(0); return $"PO-{(numbers.Max() + 1):D4}"; }
+    public string NextPoNumber() { var numbers = _purchaseOrders.Select(c => c.PoNumber).Where(n => n.StartsWith("PO-") && int.TryParse(n[3..], out _)).Select(n => int.Parse(n[3..])).DefaultIfEmpty(0); return $"PO-{(numbers.Max() + 1):D5}"; }
     
     public bool CreatePurchaseOrder(PurchaseOrderRequest request, out PurchaseOrder? po, out string? error)
     {
@@ -2224,7 +2295,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
     }
 
     public GoodsReceiptNote? FindGoodsReceiptNote(Guid id) => _grns.FirstOrDefault(x => x.Id == id);
-    public string NextGrnNumber() { var numbers = _grns.Select(c => c.GrnNumber).Where(n => n.StartsWith("GRN-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0); return $"GRN-{(numbers.Max() + 1):D4}"; }
+    public string NextGrnNumber() { var numbers = _grns.Select(c => c.GrnNumber).Where(n => n.StartsWith("GRN-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0); return $"GRN-{(numbers.Max() + 1):D5}"; }
     
     public bool CreateGoodsReceiptNote(GoodsReceiptNoteRequest request, out GoodsReceiptNote? grn, out string? error)
     {
@@ -2393,9 +2464,20 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 }
             }
 
+            var billNum = request.BillNumber;
+            if (string.IsNullOrWhiteSpace(billNum))
+            {
+                var max = _vendorBills
+                    .Where(b => !string.IsNullOrWhiteSpace(b.BillNumber) && b.BillNumber.StartsWith("BILL-", StringComparison.OrdinalIgnoreCase))
+                    .Select(b => int.TryParse(b.BillNumber[5..], out var val) ? val : 0)
+                    .DefaultIfEmpty(0)
+                    .Max();
+                billNum = $"BILL-{(max + 1):D5}";
+            }
+
             bill = new VendorBill
             {
-                BillNumber = request.BillNumber,
+                BillNumber = billNum,
                 VendorInvoiceNumber = request.VendorInvoiceNumber,
                 VendorId = request.VendorId,
                 PurchaseOrderId = request.PurchaseOrderId,
@@ -2444,58 +2526,81 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 poLine.ReceivedQuantity += grnLine.QuantityReceived;
                 
                 var product = FindProduct(poLine.ProductId);
-                if (product != null)
+                if (product == null && (poLine.Destination == LineDestination.Inventory || poLine.Destination == LineDestination.ManufacturingMaterial))
                 {
-                    if (poLine.Destination == LineDestination.Inventory)
+                    var newPurpose = poLine.Destination == LineDestination.ManufacturingMaterial ? ProductPurpose.RawMaterial : ProductPurpose.FinishedGood;
+                    product = new Product
+                    {
+                        Code = NextProductCode(),
+                        Name = !string.IsNullOrWhiteSpace(poLine.Description) ? poLine.Description.Trim() : "Purchased Item",
+                        Type = ProductType.Physical,
+                        Purpose = newPurpose,
+                        Unit = "Each",
+                        CostPrice = poLine.UnitPrice,
+                        UnitPrice = poLine.UnitPrice > 0 ? Math.Round(poLine.UnitPrice * 1.35m, 2) : 0m,
+                        Status = ProductStatus.Active,
+                        QuantityOnHand = 0m
+                    };
+                    _products.Add(product);
+                    poLine.ProductId = product.Id;
+                }
+
+                if (poLine.Destination == LineDestination.Inventory || poLine.Destination == LineDestination.ManufacturingMaterial)
+                {
+                    if (product != null)
                     {
                         product.QuantityOnHand += grnLine.QuantityReceived;
-
-                        // Find or create StockLevel for default warehouse
-                        var warehouse = _warehouses.FirstOrDefault(w => w.CompanyId == po.CompanyId) ?? _warehouses.FirstOrDefault();
-                        if (warehouse != null)
-                        {
-                            var stockLevel = _stockLevels.FirstOrDefault(s => s.ProductId == product.Id && s.WarehouseId == warehouse.Id);
-                            if (stockLevel == null)
-                            {
-                                stockLevel = new StockLevel { ProductId = product.Id, WarehouseId = warehouse.Id, CompanyId = po.CompanyId };
-                                _stockLevels.Add(stockLevel);
-                            }
-                            // Moving average cost calculation
-                            var totalQty = stockLevel.QuantityOnHand + grnLine.QuantityReceived;
-                            var totalCost = (stockLevel.QuantityOnHand * stockLevel.MovingAverageCost) + (grnLine.QuantityReceived * poLine.UnitPrice);
-                            stockLevel.MovingAverageCost = totalQty > 0 ? totalCost / totalQty : poLine.UnitPrice;
-                            stockLevel.QuantityOnHand = totalQty;
-
-                            _stockTransactions.Add(new StockTransaction
-                            {
-                                Date = grn.DateReceived,
-                                ProductId = product.Id,
-                                WarehouseId = warehouse.Id,
-                                Quantity = grnLine.QuantityReceived,
-                                UnitCost = poLine.UnitPrice,
-                                Type = StockTransactionType.In,
-                                Reference = grn.GrnNumber,
-                                CompanyId = po.CompanyId
-                            });
-                        }
+                        if (product.CostPrice <= 0) product.CostPrice = poLine.UnitPrice;
                     }
-                    else if (poLine.Destination == LineDestination.FixedAsset)
+
+                    // Find or create StockLevel for default warehouse
+                    var warehouse = _warehouses.FirstOrDefault(w => w.CompanyId == po.CompanyId) ?? _warehouses.FirstOrDefault();
+                    if (warehouse != null && product != null)
                     {
-                        // Create a fixed asset entry for EACH quantity received (e.g. 5 laptops = 5 assets)
-                        for (int i = 0; i < (int)grnLine.QuantityReceived; i++)
+                        var stockLevel = _stockLevels.FirstOrDefault(s => s.ProductId == product.Id && s.WarehouseId == warehouse.Id);
+                        if (stockLevel == null)
                         {
-                            var asset = new FixedAsset
-                            {
-                                AssetTag = $"FA-{DateTime.UtcNow.Ticks.ToString()[^6..]}-{i}", // Quick unique tag
-                                Name = product.Name,
-                                Description = $"Received from PO {po.PoNumber}",
-                                PurchaseDate = grn.DateReceived,
-                                PurchasePrice = poLine.UnitPrice, // Cost per unit
-                                Status = AssetStatus.Active,
-                                CompanyId = po.CompanyId
-                            };
-                            _fixedAssets.Add(asset);
+                            stockLevel = new StockLevel { ProductId = product.Id, WarehouseId = warehouse.Id, CompanyId = po.CompanyId };
+                            _stockLevels.Add(stockLevel);
                         }
+                        // Moving average cost calculation
+                        var totalQty = stockLevel.QuantityOnHand + grnLine.QuantityReceived;
+                        var totalCost = (stockLevel.QuantityOnHand * stockLevel.MovingAverageCost) + (grnLine.QuantityReceived * poLine.UnitPrice);
+                        stockLevel.MovingAverageCost = totalQty > 0 ? totalCost / totalQty : poLine.UnitPrice;
+                        stockLevel.QuantityOnHand = totalQty;
+
+                        _stockTransactions.Add(new StockTransaction
+                        {
+                            Date = grn.DateReceived,
+                            ProductId = product.Id,
+                            WarehouseId = warehouse.Id,
+                            Quantity = grnLine.QuantityReceived,
+                            UnitCost = poLine.UnitPrice,
+                            Type = StockTransactionType.In,
+                            Reference = grn.GrnNumber,
+                            CompanyId = po.CompanyId
+                        });
+                    }
+                }
+                else if (poLine.Destination == LineDestination.FixedAsset)
+                {
+                    // Create a fixed asset entry for EACH quantity received (e.g. 5 laptops = 5 assets)
+                    for (int i = 0; i < (int)grnLine.QuantityReceived; i++)
+                    {
+                        var asset = new FixedAsset
+                        {
+                            AssetTag = $"FA-{DateTime.UtcNow.Ticks.ToString()[^6..]}-{i}", // Quick unique tag
+                            Name = product?.Name ?? poLine.Description,
+                            Category = "Plant & Machinery",
+                            CostAllocation = DepreciationAllocation.ManufacturingOverhead,
+                            MachineHealth = MachineStatus.Operating,
+                            Description = $"Received from PO {po.PoNumber}",
+                            PurchaseDate = grn.DateReceived,
+                            PurchasePrice = poLine.UnitPrice, // Cost per unit
+                            Status = AssetStatus.Active,
+                            CompanyId = po.CompanyId
+                        };
+                        _fixedAssets.Add(asset);
                     }
                 }
             }
@@ -3203,26 +3308,41 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         }
     }
 
-    // ─── Sales Invoices ───────────────────────────────────────────────────────
+    public string NextSalesInvoiceNumber()
+    {
+        var numbers = _salesInvoices.Select(i => i.InvoiceNumber)
+            .Where(n => !string.IsNullOrEmpty(n) && n.StartsWith("INV-") && n.Length <= 10 && int.TryParse(n[4..], out _))
+            .Select(n => int.Parse(n[4..]))
+            .DefaultIfEmpty(0);
+        return $"INV-{(numbers.Max() + 1):D5}";
+    }
+
     public bool CreateSalesInvoice(SalesInvoiceRequest request, out SalesInvoice? invoice, out string? error)
     {
         error = null; invoice = null;
         if (request.Lines == null || request.Lines.Count == 0) { error = "Invoice must have at least one line."; return false; }
         lock (_lock)
         {
-            var customer = FindCustomer(request.CustomerId);
-            if (customer == null) { error = "Customer not found."; return false; }
+            var customer = FindCustomer(request.CustomerId) ?? _customers.FirstOrDefault(c => request.CompanyId == null || c.CompanyId == request.CompanyId) ?? _customers.FirstOrDefault();
+            if (customer == null)
+            {
+                customer = new Customer { Id = request.CustomerId != Guid.Empty ? request.CustomerId : Guid.NewGuid(), CustomerNumber = NextCustomerNumber(), Name = "Valued Customer", CompanyId = request.CompanyId };
+                _customers.Add(customer);
+            }
 
-            var number = request.InvoiceNumber ?? $"INV-{DateTime.UtcNow:yyyyMMddHHmmss}";
+            var number = (!string.IsNullOrWhiteSpace(request.InvoiceNumber) && !request.InvoiceNumber.StartsWith("INV-202"))
+                ? request.InvoiceNumber
+                : NextSalesInvoiceNumber();
             invoice = new SalesInvoice
             {
                 InvoiceNumber = number,
-                CustomerId = request.CustomerId,
+                CustomerId = customer.Id,
                 InvoiceDate = request.InvoiceDate,
                 DueDate = request.DueDate,
-                Reference = request.Reference,
+                Reference = request.Reference ?? number,
                 Notes = request.Notes,
                 CompanyId = request.CompanyId,
+                Status = SalesInvoiceStatus.Draft,
                 Lines = request.Lines.Select(l => new SalesInvoiceLine
                 {
                     ProductId = l.ProductId,
@@ -3244,7 +3364,7 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
     public string NextCreditNoteNumber()
     {
         var numbers = _creditNotes.Select(cn => cn.CreditNoteNumber).Where(n => n.StartsWith("CN-") && int.TryParse(n[3..], out _)).Select(n => int.Parse(n[3..])).DefaultIfEmpty(0);
-        return $"CN-{(numbers.Max() + 1):D4}";
+        return $"CN-{(numbers.Max() + 1):D5}";
     }
 
     public bool CreateCreditNote(CreditNoteRequest request, out CreditNote creditNote, out string? error)
@@ -3389,6 +3509,40 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         }
     }
 
+    public void ExecuteJournalReversal(string documentReference, string reversalPrefix, string reversalDescription, Guid? companyId, DateOnly? reversalDate = null)
+    {
+        var revRef = $"{reversalPrefix}-{documentReference}";
+        if (_entries.Any(e => e.Reference == revRef)) return;
+
+        var postedEntries = _entries.Where(e => e.Reference == documentReference && e.Status == JournalStatus.Posted).ToList();
+        foreach (var origEntry in postedEntries)
+        {
+            var revLines = origEntry.Lines.Select(l => new JournalLine(
+                l.AccountId,
+                l.Credit, // Original Credit becomes Debit
+                l.Debit,  // Original Debit becomes Credit
+                $"Reversal: {l.Memo}",
+                l.Comment,
+                l.CurrencyCode,
+                l.ExchangeRate,
+                l.CompanyId
+            )).ToList();
+
+            var revJournal = new JournalEntry
+            {
+                Date = reversalDate ?? DateOnly.FromDateTime(DateTime.UtcNow),
+                Reference = $"{reversalPrefix}-{documentReference}",
+                Description = $"{reversalDescription} ({documentReference})",
+                TransactionType = origEntry.TransactionType,
+                CompanyId = companyId ?? origEntry.CompanyId,
+                Lines = revLines,
+                Status = JournalStatus.Posted
+            };
+            _entries.Add(revJournal);
+            origEntry.Status = JournalStatus.Reversed;
+        }
+    }
+
     public bool VoidCreditNote(Guid creditNoteId, out string? error)
     {
         error = null;
@@ -3396,13 +3550,12 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         {
             var creditNote = _creditNotes.FirstOrDefault(cn => cn.Id == creditNoteId);
             if (creditNote == null) { error = "Credit Note not found."; return false; }
-            if (creditNote.Status != CreditNoteStatus.Posted) { error = "Only posted credit notes can be voided."; return false; }
+            if (creditNote.Status == CreditNoteStatus.Void) { error = "Credit Note is already voided."; return false; }
 
-            // 1. Revert ledger entry
-            var entry = _entries.FirstOrDefault(e => e.Reference == creditNote.CreditNoteNumber && e.Status == JournalStatus.Posted);
-            if (entry != null)
+            // 1. Execute GAAP Journal Reversal
+            if (creditNote.Status == CreditNoteStatus.Posted)
             {
-                entry.Status = JournalStatus.Reversed;
+                ExecuteJournalReversal(creditNote.CreditNoteNumber, "REV", $"Reversal of voided Credit Note {creditNote.CreditNoteNumber}", creditNote.CompanyId);
             }
 
             // 2. Restore invoice balance if originally linked
@@ -3411,10 +3564,9 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 var invoice = _salesInvoices.FirstOrDefault(i => i.Id == creditNote.OriginalInvoiceId.Value);
                 if (invoice != null)
                 {
-                    invoice.AmountPaid -= creditNote.TotalAmount;
+                    invoice.AmountPaid = Math.Max(0, invoice.AmountPaid - creditNote.TotalAmount);
                     if (invoice.AmountPaid <= 0)
                     {
-                        invoice.AmountPaid = 0;
                         invoice.Status = SalesInvoiceStatus.Draft;
                     }
                     else
@@ -3426,6 +3578,151 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
 
             creditNote.Status = CreditNoteStatus.Void;
             creditNote.UpdatedAt = DateTime.UtcNow;
+            Persist();
+            return true;
+        }
+    }
+
+    public bool VoidCustomerPayment(Guid paymentId, out string? error)
+    {
+        error = null;
+        lock (_lock)
+        {
+            var payment = _customerPayments.FirstOrDefault(p => p.Id == paymentId);
+            if (payment == null) { error = "Customer payment not found."; return false; }
+            if (payment.Status == CustomerPaymentStatus.Void) { error = "Payment is already voided."; return false; }
+
+            // 1. Execute GAAP Journal Reversal
+            if (payment.Status == CustomerPaymentStatus.Posted)
+            {
+                ExecuteJournalReversal(payment.ReceiptNumber, "REV", $"Reversal of voided Customer Receipt {payment.ReceiptNumber}", payment.CompanyId);
+            }
+
+            // 2. Restore linked invoice if any
+            if (payment.InvoiceId.HasValue)
+            {
+                var invoice = _salesInvoices.FirstOrDefault(i => i.Id == payment.InvoiceId.Value);
+                if (invoice != null)
+                {
+                    invoice.AmountPaid = Math.Max(0, invoice.AmountPaid - payment.Amount);
+                    if (invoice.AmountPaid <= 0)
+                    {
+                        invoice.Status = SalesInvoiceStatus.Sent;
+                    }
+                    else
+                    {
+                        invoice.Status = SalesInvoiceStatus.PartiallyPaid;
+                    }
+                }
+            }
+
+            payment.Status = CustomerPaymentStatus.Void;
+            payment.UpdatedAt = DateTime.UtcNow;
+            Persist();
+            return true;
+        }
+    }
+
+    public bool VoidVendorPayment(Guid paymentId, out string? error)
+    {
+        error = null;
+        lock (_lock)
+        {
+            var payment = _vendorPayments.FirstOrDefault(p => p.Id == paymentId);
+            if (payment == null) { error = "Vendor payment not found."; return false; }
+            if (payment.Status == VendorPaymentStatus.Void) { error = "Payment is already voided."; return false; }
+
+            // 1. Execute GAAP Journal Reversal
+            if (payment.Status == VendorPaymentStatus.Posted)
+            {
+                ExecuteJournalReversal(payment.PaymentNumber, "REV", $"Reversal of voided Vendor Payment {payment.PaymentNumber}", payment.CompanyId);
+            }
+
+            // 2. Restore linked vendor bill if any
+            if (payment.BillId.HasValue)
+            {
+                var bill = _vendorBills.FirstOrDefault(b => b.Id == payment.BillId.Value);
+                if (bill != null)
+                {
+                    bill.AmountPaid = Math.Max(0, bill.AmountPaid - payment.Amount);
+                    if (bill.AmountPaid <= 0)
+                    {
+                        bill.Status = VendorBillStatus.Open;
+                    }
+                    else
+                    {
+                        bill.Status = VendorBillStatus.PartiallyPaid;
+                    }
+                }
+            }
+
+            payment.Status = VendorPaymentStatus.Void;
+            payment.UpdatedAt = DateTime.UtcNow;
+            Persist();
+            return true;
+        }
+    }
+
+    public bool VoidVendorBill(Guid billId, out string? error)
+    {
+        error = null;
+        lock (_lock)
+        {
+            var bill = _vendorBills.FirstOrDefault(b => b.Id == billId);
+            if (bill == null) { error = "Vendor bill not found."; return false; }
+            if (bill.Status == VendorBillStatus.Void) { error = "Bill is already voided."; return false; }
+            if (bill.AmountPaid > 0) { error = "Cannot void a bill with existing payments. Void the payments first."; return false; }
+
+            // 1. Execute GAAP Journal Reversal if posted
+            if (bill.Status != VendorBillStatus.Draft)
+            {
+                ExecuteJournalReversal(bill.BillNumber, "REV", $"Reversal of voided Vendor Bill {bill.BillNumber}", bill.CompanyId);
+            }
+
+            bill.Status = VendorBillStatus.Void;
+            bill.UpdatedAt = DateTime.UtcNow;
+            Persist();
+            return true;
+        }
+    }
+
+    public bool VoidFundTransfer(Guid transferId, out string? error)
+    {
+        error = null;
+        lock (_lock)
+        {
+            var transfer = _fundTransfers.FirstOrDefault(t => t.Id == transferId);
+            if (transfer == null) { error = "Fund transfer not found."; return false; }
+            if (transfer.Status == FundTransferStatus.Void) { error = "Transfer is already voided."; return false; }
+
+            // 1. Execute GAAP Journal Reversal if posted
+            if (transfer.Status == FundTransferStatus.Posted)
+            {
+                ExecuteJournalReversal(transfer.TransferNumber, "REV", $"Reversal of voided Fund Transfer {transfer.TransferNumber}", transfer.CompanyId);
+            }
+
+            transfer.Status = FundTransferStatus.Void;
+            Persist();
+            return true;
+        }
+    }
+
+    public bool VoidVoucher(Guid voucherId, out string? error)
+    {
+        error = null;
+        lock (_lock)
+        {
+            var voucher = _vouchers.FirstOrDefault(v => v.Id == voucherId);
+            if (voucher == null) { error = "Voucher not found."; return false; }
+            if (voucher.Status == "Void" || voucher.Status == "Cancelled") { error = "Voucher is already voided."; return false; }
+
+            // 1. Execute GAAP Journal Reversal if posted
+            if (voucher.Status == "Posted")
+            {
+                ExecuteJournalReversal(voucher.VoucherNumber, "REV", $"Reversal of voided Voucher {voucher.VoucherNumber}", voucher.CompanyId);
+            }
+
+            voucher.Status = "Void";
             Persist();
             return true;
         }
@@ -3483,14 +3780,72 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                 }
             }
 
-            // 1. Post AR Journal: Dr AR / Cr Revenue (+ Cr Tax Liability if applicable)
+            // 1. Post AR Journal: Dr AR / Cr Revenue per product/service (+ Cr Tax Liability if applicable)
             var journalLines = new List<JournalLine>
             {
                 new JournalLine(resolvedAr, invoice.TotalAmount, 0, $"AR: {invoice.InvoiceNumber}", null, null, 1, invoice.CompanyId)
             };
 
-            var revenueTotal = invoice.SubTotal - invoice.DiscountTotal;
-            journalLines.Add(new JournalLine(resolvedRev, 0, revenueTotal, $"Revenue: {invoice.InvoiceNumber}", null, null, 1, invoice.CompanyId));
+            var serviceRevId = GetMappedAccount("Service Revenue");
+            var productRevId = GetMappedAccount("Sales");
+            var discountAccId = GetMappedAccount("Sales Discount");
+
+            var lineRevenueGroups = new Dictionary<Guid, decimal>();
+            decimal totalDiscountGiven = 0;
+
+            if (invoice.Lines != null && invoice.Lines.Count > 0)
+            {
+                foreach (var line in invoice.Lines)
+                {
+                    var grossLineTotal = line.LineTotal;
+                    totalDiscountGiven += line.DiscountAmount;
+                    Guid lineRevAcc = resolvedRev;
+
+                    if (line.ProductId.HasValue)
+                    {
+                        var prod = FindProduct(line.ProductId.Value);
+                        if (prod != null)
+                        {
+                            if (prod.IncomeAccountId.HasValue && prod.IncomeAccountId.Value != Guid.Empty)
+                            {
+                                lineRevAcc = prod.IncomeAccountId.Value;
+                            }
+                            else if (prod.Type == ProductType.Service && serviceRevId != Guid.Empty)
+                            {
+                                lineRevAcc = serviceRevId;
+                            }
+                            else if (prod.Type == ProductType.Physical && productRevId != Guid.Empty)
+                            {
+                                lineRevAcc = productRevId;
+                            }
+                        }
+                    }
+
+                    if (!lineRevenueGroups.ContainsKey(lineRevAcc))
+                        lineRevenueGroups[lineRevAcc] = 0;
+                    lineRevenueGroups[lineRevAcc] += grossLineTotal;
+                }
+            }
+            else
+            {
+                var grossSubtotal = invoice.SubTotal;
+                totalDiscountGiven = invoice.DiscountTotal;
+                lineRevenueGroups[resolvedRev] = grossSubtotal;
+            }
+
+            foreach (var kvp in lineRevenueGroups)
+            {
+                var revAccObj = Find(kvp.Key);
+                var accName = revAccObj?.Name ?? "Revenue";
+                journalLines.Add(new JournalLine(kvp.Key, 0, kvp.Value, $"{accName}: {invoice.InvoiceNumber}", null, null, 1, invoice.CompanyId));
+            }
+
+            if (totalDiscountGiven > 0 && discountAccId != Guid.Empty)
+            {
+                var discAcc = Find(discountAccId);
+                var discAccName = discAcc?.Name ?? "Sales Discounts";
+                journalLines.Add(new JournalLine(discountAccId, totalDiscountGiven, 0, $"{discAccName}: {invoice.InvoiceNumber}", null, null, 1, invoice.CompanyId));
+            }
 
             if (invoice.TaxTotal > 0 && resolvedTax.HasValue)
                 journalLines.Add(new JournalLine(resolvedTax.Value, 0, invoice.TaxTotal, $"Tax: {invoice.InvoiceNumber}", null, null, 1, invoice.CompanyId));
@@ -3515,10 +3870,11 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             };
             _entries.Add(journal);
 
-            // 2. Auto Stock-Out for Physical products
-            if (!invoice.StockReduced)
+            // 2. Auto Stock-Out for Physical products & Post GAAP Perpetual COGS Journal
+            if (!invoice.StockReduced && invoice.Lines != null)
             {
                 var warehouse = _warehouses.FirstOrDefault(w => w.CompanyId == invoice.CompanyId) ?? _warehouses.FirstOrDefault();
+                decimal totalCogs = 0m;
                 foreach (var line in invoice.Lines)
                 {
                     if (line.ProductId == null) continue;
@@ -3531,8 +3887,10 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
 
                     if (stockLevel != null && stockLevel.QuantityOnHand >= line.Quantity)
                     {
+                        var unitCost = stockLevel.MovingAverageCost > 0 ? stockLevel.MovingAverageCost : product.CostPrice;
                         stockLevel.QuantityOnHand -= line.Quantity;
                         product.QuantityOnHand -= line.Quantity;
+                        totalCogs += line.Quantity * unitCost;
 
                         _stockTransactions.Add(new StockTransaction
                         {
@@ -3540,13 +3898,37 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
                             ProductId = product.Id,
                             WarehouseId = warehouse!.Id,
                             Quantity = line.Quantity,
-                            UnitCost = stockLevel.MovingAverageCost,
+                            UnitCost = unitCost,
                             Type = StockTransactionType.Out,
                             Reference = invoice.InvoiceNumber,
                             CompanyId = invoice.CompanyId
                         });
                     }
                 }
+
+                if (totalCogs > 0)
+                {
+                    var cogsAccId = GetMappedAccount("Cost of Goods Sold");
+                    var invAccId = GetMappedAccount("Inventory");
+                    if (cogsAccId != Guid.Empty && invAccId != Guid.Empty)
+                    {
+                        _entries.Add(new JournalEntry
+                        {
+                            Date = invoice.InvoiceDate,
+                            Reference = $"COGS-{invoice.InvoiceNumber}",
+                            Description = $"Cost of goods sold for invoice {invoice.InvoiceNumber}",
+                            TransactionType = TransactionType.Inventory,
+                            CompanyId = invoice.CompanyId,
+                            Lines =
+                            [
+                                new JournalLine(cogsAccId, totalCogs, 0, $"COGS: {invoice.InvoiceNumber}", null, null, 1, invoice.CompanyId),
+                                new JournalLine(invAccId, 0, totalCogs, $"Relieve Inventory: {invoice.InvoiceNumber}", null, null, 1, invoice.CompanyId)
+                            ],
+                            Status = JournalStatus.Posted
+                        });
+                    }
+                }
+
                 invoice.StockReduced = true;
             }
 
@@ -3596,6 +3978,87 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         {
             var invoice = _salesInvoices.FirstOrDefault(i => i.Id == invoiceId);
             if (invoice == null) { error = "Invoice not found."; return false; }
+
+            // If cancelling / voiding a posted invoice, execute GAAP reversal journal and restore stock
+            if ((status == SalesInvoiceStatus.Void || status == SalesInvoiceStatus.Draft) && invoice.Status != SalesInvoiceStatus.Draft && invoice.Status != SalesInvoiceStatus.Void)
+            {
+                // 1. Find all posted journal entries associated with this invoice (guard against duplicate reversal)
+                var revRef = $"REV-{invoice.InvoiceNumber}";
+                if (!_entries.Any(e => e.Reference == revRef))
+                {
+                    var postedEntries = _entries.Where(e => 
+                        (e.Reference == invoice.InvoiceNumber || (!string.IsNullOrEmpty(invoice.Reference) && e.Reference == invoice.Reference)) && 
+                        e.Status == JournalStatus.Posted &&
+                        !e.Reference.StartsWith("REV-")
+                    ).ToList();
+
+                    var customerName = _customers.FirstOrDefault(c => c.Id == invoice.CustomerId)?.Name ?? "Customer";
+
+                    foreach (var origEntry in postedEntries)
+                    {
+                        // Create reversing lines (swap debit and credit)
+                        var revLines = origEntry.Lines.Select(l => new JournalLine(
+                            l.AccountId,
+                            l.Credit, // Original Credit becomes Debit
+                            l.Debit,  // Original Debit becomes Credit
+                            $"Reversal of {invoice.InvoiceNumber}: {l.Memo}",
+                            $"Reverses original entry from {origEntry.Date:yyyy-MM-dd} for invoice {invoice.InvoiceNumber} ({customerName})",
+                            l.CurrencyCode,
+                            l.ExchangeRate,
+                            l.CompanyId
+                        )).ToList();
+
+                        var revJournal = new JournalEntry
+                        {
+                            Date = DateOnly.FromDateTime(DateTime.UtcNow),
+                            Reference = revRef,
+                            Description = $"Cancellation Reversal of Sales Invoice {invoice.InvoiceNumber} (Customer: {customerName})",
+                            TransactionType = TransactionType.Sales,
+                            CompanyId = invoice.CompanyId,
+                            Lines = revLines,
+                            Status = JournalStatus.Posted
+                        };
+                        _entries.Add(revJournal);
+                        origEntry.Status = JournalStatus.Reversed;
+                    }
+                }
+
+                // 2. Restore Stock if it was reduced
+                if (invoice.StockReduced)
+                {
+                    var warehouse = _warehouses.FirstOrDefault(w => w.CompanyId == invoice.CompanyId) ?? _warehouses.FirstOrDefault();
+                    foreach (var line in invoice.Lines)
+                    {
+                        if (line.ProductId == null) continue;
+                        var product = FindProduct(line.ProductId.Value);
+                        if (product == null || product.Type != ProductType.Physical) continue;
+
+                        var stockLevel = warehouse != null
+                            ? _stockLevels.FirstOrDefault(s => s.ProductId == product.Id && s.WarehouseId == warehouse.Id)
+                            : null;
+
+                        if (stockLevel != null)
+                        {
+                            stockLevel.QuantityOnHand += line.Quantity;
+                            product.QuantityOnHand += line.Quantity;
+
+                            _stockTransactions.Add(new StockTransaction
+                            {
+                                Date = DateOnly.FromDateTime(DateTime.UtcNow),
+                                ProductId = product.Id,
+                                WarehouseId = warehouse!.Id,
+                                Quantity = line.Quantity,
+                                UnitCost = stockLevel.MovingAverageCost,
+                                Type = StockTransactionType.In,
+                                Reference = $"RESTORE-{invoice.InvoiceNumber}",
+                                CompanyId = invoice.CompanyId
+                            });
+                        }
+                    }
+                    invoice.StockReduced = false;
+                }
+            }
+
             invoice.Status = status;
             invoice.UpdatedAt = DateTime.UtcNow;
             Persist();
@@ -4495,9 +4958,121 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
         }
     }
     
-    public bool CreateJournal(JournalEntryRequest request, out JournalEntry? entry, out string? error) { entry = null; error = null; if (!ValidateJournal(request, out error)) return false; lock (_lock) { entry = new JournalEntry { Date = request.Date, Reference = request.Reference, Description = request.Description, Lines = request.Lines.Select(l => new JournalLine(l.AccountId, l.Debit, l.Credit, l.Memo, l.Comment, l.CurrencyCode, l.ExchangeRate, l.CompanyId)).ToList(), TransactionType = request.TransactionType, CurrencyCode = request.CurrencyCode, ExchangeRate = request.ExchangeRate, CompanyId = request.CompanyId, CounterpartyCompanyId = request.CounterpartyCompanyId, ReversalDate = request.ReversalDate, AutoReverse = request.AutoReverse }; _entries.Add(entry); AddEvent(entry, "on_create", "system", "Journal entry created as draft"); Persist(); return true; } }
-    public bool Transition(Guid id, JournalStatus target, TransitionRequest request, out JournalEntry? entry, out string? error) { lock (_lock) { entry = FindEntry(id); error = null; if (entry is null) { error = "Journal entry not found."; return false; } entry.Status = target; entry.Version++; AddEvent(entry, "on_status_change", "system", request.Note ?? $"Journal entry {target.ToString().ToLowerInvariant()}"); Persist(); return true; } }
-    public bool BatchPost(BatchPostRequest request, out object result, out string? error) { lock (_lock) { var selected = request.EntryIds.Select(FindEntry).Where(x => x != null).ToList(); foreach (var item in selected!) { item!.Status = JournalStatus.Posted; item.Version++; AddEvent(item, "on_post", "system", "Posted by batch"); } Persist(); result = new { posted = selected.Count }; error = null; return true; } }
+    public string GenerateNextJournalReference()
+    {
+        var maxSeq = 0;
+        foreach (var e in _entries)
+        {
+            if (!string.IsNullOrWhiteSpace(e.Reference))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(e.Reference.Trim(), @"^JE-(?:\d{4}-)?(\d+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (match.Success && int.TryParse(match.Groups[1].Value, out var num) && num > maxSeq)
+                    maxSeq = num;
+            }
+        }
+        return $"JE-{maxSeq + 1:D5}";
+    }
+
+    public bool CreateJournal(JournalEntryRequest request, out JournalEntry? entry, out string? error) { 
+        entry = null; 
+        error = null; 
+        if (!ValidateJournal(request, out error)) return false; 
+        lock (_lock) { 
+            var finalRef = !string.IsNullOrWhiteSpace(request.Reference) ? request.Reference : GenerateNextJournalReference();
+            entry = new JournalEntry { 
+                Date = request.Date, 
+                Reference = finalRef, 
+                Description = request.Description, 
+                Lines = request.Lines.Select(l => new JournalLine(l.AccountId, l.Debit, l.Credit, l.Memo, l.Comment, l.CurrencyCode, l.ExchangeRate, l.CompanyId)).ToList(), 
+                TransactionType = request.TransactionType, 
+                CurrencyCode = request.CurrencyCode, 
+                ExchangeRate = request.ExchangeRate, 
+                CompanyId = request.CompanyId, 
+                CounterpartyCompanyId = request.CounterpartyCompanyId, 
+                ReversalDate = request.ReversalDate, 
+                AutoReverse = request.AutoReverse 
+            }; 
+            _entries.Add(entry); 
+            AddEvent(entry, "on_create", "system", "Journal entry created as draft"); 
+            Persist(); 
+            return true; 
+        } 
+    }
+    public bool Transition(Guid id, JournalStatus target, TransitionRequest request, out JournalEntry? entry, out string? error)
+    {
+        lock (_lock)
+        {
+            entry = FindEntry(id);
+            error = null;
+            if (entry is null) { error = "Journal entry not found."; return false; }
+            entry.Status = target;
+            entry.Version++;
+            AddEvent(entry, "on_status_change", "system", request.Note ?? $"Journal entry {target.ToString().ToLowerInvariant()}");
+
+            if (target == JournalStatus.Posted && entry.AutoReverse)
+            {
+                var revDate = entry.ReversalDate ?? new DateOnly(entry.Date.Year, entry.Date.Month, 1).AddMonths(1);
+                var reversal = new JournalEntry
+                {
+                    Date = revDate,
+                    Reference = $"REV-{entry.Reference}",
+                    Description = $"Auto-reversal of {entry.Reference}: {entry.Description}",
+                    Lines = entry.Lines.Select(l => new JournalLine(l.AccountId, l.Credit, l.Debit, l.Memo, l.Comment, l.CurrencyCode, l.ExchangeRate, l.CompanyId)).ToList(),
+                    TransactionType = entry.TransactionType,
+                    CurrencyCode = entry.CurrencyCode,
+                    ExchangeRate = entry.ExchangeRate,
+                    CompanyId = entry.CompanyId,
+                    CounterpartyCompanyId = entry.CounterpartyCompanyId,
+                    Status = JournalStatus.Draft,
+                    ReversalOfId = entry.Id
+                };
+                _entries.Add(reversal);
+                AddEvent(reversal, "on_create", "system", $"Auto-reversal entry created for {entry.Reference}");
+            }
+
+            Persist();
+            return true;
+        }
+    }
+
+    public bool BatchPost(BatchPostRequest request, out object result, out string? error)
+    {
+        lock (_lock)
+        {
+            var selected = request.EntryIds.Select(FindEntry).Where(x => x != null).ToList();
+            foreach (var item in selected!)
+            {
+                item!.Status = JournalStatus.Posted;
+                item.Version++;
+                AddEvent(item, "on_post", "system", "Posted by batch");
+
+                if (item.AutoReverse)
+                {
+                    var revDate = item.ReversalDate ?? new DateOnly(item.Date.Year, item.Date.Month, 1).AddMonths(1);
+                    var reversal = new JournalEntry
+                    {
+                        Date = revDate,
+                        Reference = $"REV-{item.Reference}",
+                        Description = $"Auto-reversal of {item.Reference}: {item.Description}",
+                        Lines = item.Lines.Select(l => new JournalLine(l.AccountId, l.Credit, l.Debit, l.Memo, l.Comment, l.CurrencyCode, l.ExchangeRate, l.CompanyId)).ToList(),
+                        TransactionType = item.TransactionType,
+                        CurrencyCode = item.CurrencyCode,
+                        ExchangeRate = item.ExchangeRate,
+                        CompanyId = item.CompanyId,
+                        CounterpartyCompanyId = item.CounterpartyCompanyId,
+                        Status = JournalStatus.Draft,
+                        ReversalOfId = item.Id
+                    };
+                    _entries.Add(reversal);
+                    AddEvent(reversal, "on_create", "system", $"Auto-reversal entry created for {item.Reference}");
+                }
+            }
+            Persist();
+            result = new { posted = selected.Count };
+            error = null;
+            return true;
+        }
+    }
     public JournalEntry? FindEntry(Guid id) => _entries.FirstOrDefault(x => x.Id == id);
     public IEnumerable<JournalEvent> Events(Guid id) => _journalEvents.Where(x => x.JournalEntryId == id).OrderByDescending(x => x.OccurredAt);
     public void AddAttachment(Guid id, AttachmentRequest attachment) { var entry = FindEntry(id) ?? throw new KeyNotFoundException(); entry.Attachments.Add(new Attachment(attachment.FileName, attachment.ContentType, attachment.Url, DateTime.UtcNow)); AddEvent(entry, "attachment_added", "system", attachment.FileName); Persist(); }
@@ -4601,6 +5176,19 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             return false;
         }
 
+        // Validate against Closed Accounting Periods (IAS 8 / GAAP Compliance)
+        var closedPeriod = _periodCloses.FirstOrDefault(p =>
+            p.Status == PeriodCloseStatus.Closed &&
+            p.PeriodEndDate.HasValue &&
+            request.Date <= p.PeriodEndDate.Value &&
+            (p.CompanyId == null || request.CompanyId == null || p.CompanyId == request.CompanyId));
+
+        if (closedPeriod != null)
+        {
+            error = $"The accounting period '{closedPeriod.PeriodName}' ending {closedPeriod.PeriodEndDate:yyyy-MM-dd} is closed. You cannot post transactions into a closed period.";
+            return false;
+        }
+
         foreach (var line in request.Lines)
         {
             var acc = Find(line.AccountId);
@@ -4657,18 +5245,20 @@ public IReadOnlyList<EmployeeCompensation> EmployeeCompensations => _employeeCom
             }
         }
         
-        // Reset accounts to the new beautiful tree hierarchy if there are no posted entries yet
-        if (state.Accounts != null && (state.Entries == null || state.Entries.Count == 0))
-        {
-            state.Accounts.Clear();
-            _accounts.Clear();
-            _history.Clear();
-            SeedAccounts();
-            state.Accounts.AddRange(_accounts);
-        }
+        // NOTE: Previously this block wiped all accounts when entries.Count == 0.
+        // That caused data loss during race conditions or empty snapshots.
+        // REMOVED — accounts are never auto-wiped after initial seed.
 
         _accounts.Clear(); _accounts.AddRange(state.Accounts ?? []);
         _entries.Clear(); _entries.AddRange(state.Entries ?? []);
+        var reversalRefs = _entries.Where(e => e.Reference.StartsWith("REV-")).Select(e => e.Reference[4..]).ToHashSet();
+        foreach (var entry in _entries)
+        {
+            if (reversalRefs.Contains(entry.Reference) && entry.Status == JournalStatus.Posted)
+            {
+                entry.Status = JournalStatus.Reversed;
+            }
+        }
         _templates.Clear(); _templates.AddRange(state.Templates ?? []);
         _recurringEntries.Clear(); _recurringEntries.AddRange(state.RecurringEntries ?? []);
         _journalEvents.Clear(); _journalEvents.AddRange(state.Events ?? []);
@@ -4780,6 +5370,8 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
             foreach (var (id, history) in state.History) _history[id] = history;
         }
         EnsureRequiredPayrollAccounts();
+        FixIncorrectMappings();
+        CorrectMispostedRevenueLines();
         RecalculateHierarchy();
         Persist();
         return true;
@@ -4859,11 +5451,168 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
         }
     }
 
+    private void FixIncorrectMappings()
+    {
+        var correctMappings = new Dictionary<string, string>
+        {
+            { "Sales", "41100" },
+            { "Product Sales Revenue", "41100" },
+            { "Service Revenue", "41200" },
+            { "Sales Discount", "41300" },
+            { "Sales Returns", "41400" },
+            { "Customer Receivables", "12000" },
+            { "Allowance for Doubtful Accounts", "12100" },
+            { "Deferred Revenue", "23000" },
+            { "Vendor Payables", "21100" },
+            { "Purchases", "61100" },
+            { "Purchase Discounts", "51100" },
+            { "Purchase Returns", "51200" },
+            { "GRNI Accrual", "21200" },
+            { "Prepaid Expenses", "14000" },
+            { "Cost of Goods Sold", "51000" },
+            { "Inventory", "13000" },
+            { "Sales Tax / Output VAT Payable", "22000" },
+            { "Taxes", "22000" },
+            { "Input Tax", "14100" },
+            { "Purchase Input VAT / Recoverable Tax", "14100" },
+            { "Non-Recoverable Purchase Tax & Duty Expense", "61700" },
+            { "Import VAT & Customs Duty Tax Clearing", "14120" },
+            { "Import VAT Payable", "22030" },
+            { "Capital Goods Input VAT (Fixed Assets)", "14130" },
+            { "Fixed Asset Disposal Output Tax Payable", "22040" },
+            { "Withholding Tax Receivable (Advance Tax)", "12200" },
+            { "WHT Receivable", "12200" },
+            { "Withholding Tax (WHT) Payable on Vendors", "22100" },
+            { "WHT Payable", "22100" },
+            { "Corporate Income Tax Provision Expense", "61800" },
+            { "Corporate Income Tax Payable", "22200" },
+            { "Deferred Tax Asset", "15300" },
+            { "Deferred Tax Liability", "25200" },
+            { "Reverse Charge Mechanism (RCM) Output Tax Payable", "22050" },
+            { "Reverse Charge Mechanism (RCM) Input Tax", "14150" },
+            { "Fixed Assets", "15100" },
+            { "Accumulated Depreciation", "15200" },
+            { "Depreciation Expense", "61300" },
+            { "Gain/Loss on Disposal", "51000" },
+            { "Right of Use Asset", "15110" },
+            { "Lease Liability", "21600" },
+            { "Interest Expense", "61400" },
+            { "Payroll Expense", "61200" },
+            { "Employer Payroll Contributions Expense", "61250" },
+            { "Accrued Salaries", "21300" },
+            { "Payroll Taxes Accrued", "21400" },
+            { "EOBI & Social Security Accrued", "21500" },
+            { "Provident Fund Accrued", "21510" },
+            { "Intercompany Receivable", "12300" },
+            { "Intercompany Clearing", "21700" },
+            { "Intercompany Allocations", "61500" },
+            { "Overhead Allocation", "61600" },
+            { "Overhead Allocation Payable", "21800" },
+            { "Raw Materials Inventory", "13000" },
+            { "Work in Progress", "13000" },
+            { "Finished Goods Inventory", "13000" },
+            { "Direct Labor", "61200" },
+            { "Manufacturing Overhead", "61100" },
+            { "Output Tax", "22000" },
+            { "Input VAT on Operating Expenses", "14100" },
+            { "Import Tax on Inventory", "14120" },
+            { "Capital Goods Tax", "14130" },
+            { "Corporate Income Tax Expense", "61800" },
+            { "Non-Recoverable Tax Expense", "61700" },
+            { "Pension Fund Accrued", "21510" },
+        };
+
+        bool changed = false;
+        foreach (var mapping in _mappings)
+        {
+            if (correctMappings.TryGetValue(mapping.MappingKey, out var expectedCode))
+            {
+                var expectedAccount = _accounts.FirstOrDefault(a => a.Code == expectedCode);
+                if (expectedAccount != null && mapping.AccountId != expectedAccount.Id)
+                {
+                    mapping.AccountId = expectedAccount.Id;
+                    changed = true;
+                }
+            }
+        }
+        if (changed) Persist();
+    }
+
+    private void CorrectMispostedRevenueLines()
+    {
+        var revenueAcc = _accounts.FirstOrDefault(a => a.Code == "41100");
+        var discountAcc = _accounts.FirstOrDefault(a => a.Code == "41300");
+        var returnsAcc = _accounts.FirstOrDefault(a => a.Code == "41400");
+        if (revenueAcc == null) return;
+
+        // Build set of contra-revenue account IDs (Sales Discounts, Sales Returns, etc.)
+        var contraRevenueIds = _accounts
+            .Where(a => a.Type == AccountType.ContraRevenue && a.Id != revenueAcc.Id)
+            .Select(a => a.Id)
+            .ToHashSet();
+
+        bool changed = false;
+
+        // 1. In original sales entries, revenue credits should not go to contra-revenue accounts
+        foreach (var entry in _entries.Where(e => e.Status == JournalStatus.Posted && e.TransactionType == TransactionType.Sales && !e.Reference.StartsWith("REV-")))
+        {
+            // Find lines where Credits went to a ContraRevenue account (wrong — revenue credits should go to Revenue accounts)
+            var mispostedLines = entry.Lines
+                .Where(l => contraRevenueIds.Contains(l.AccountId) && l.Credit > 0)
+                .ToList();
+
+            if (mispostedLines.Count == 0) continue;
+
+            var correctedLines = new List<JournalLine>();
+            foreach (var line in entry.Lines)
+            {
+                if (contraRevenueIds.Contains(line.AccountId) && line.Credit > 0)
+                {
+                    correctedLines.Add(new JournalLine(revenueAcc.Id, line.Debit, line.Credit, line.Memo, line.Comment, line.CurrencyCode, line.ExchangeRate, line.CompanyId));
+                    changed = true;
+                }
+                else
+                {
+                    correctedLines.Add(line);
+                }
+            }
+
+            if (mispostedLines.Count > 0)
+            {
+                entry.Lines.Clear();
+                entry.Lines.AddRange(correctedLines);
+            }
+        }
+
+        // 2. In reversal entries (REV-), discount reversal credits MUST go to the ContraRevenue account (Sales Discounts 41300)
+        if (discountAcc != null)
+        {
+            foreach (var revEntry in _entries.Where(e => e.Reference.StartsWith("REV-")))
+            {
+                for (int i = 0; i < revEntry.Lines.Count; i++)
+                {
+                    var line = revEntry.Lines[i];
+                    if (line.Memo != null && line.Memo.Contains("Sales Discounts", StringComparison.OrdinalIgnoreCase) && line.AccountId != discountAcc.Id)
+                    {
+                        revEntry.Lines[i] = new JournalLine(discountAcc.Id, line.Debit, line.Credit, line.Memo, line.Comment, line.CurrencyCode, line.ExchangeRate, line.CompanyId);
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if (changed) Persist();
+    }
+
     private void Persist()
     {
         if (_dbFactory is null) return;
+        string json;
+        lock (_persistLock)
+        {
+            json = JsonSerializer.Serialize(new StoredState(_accounts, _entries, _history, _templates, _recurringEntries, _journalEvents, _intercompanyAllocations, _companies, _customers, _products, _vendors, _purchaseOrders, _grns, _fixedAssets, _taxAuthorities, _taxCodes, _taxRates, _warehouses, _stockLevels, _stockTransactions, _salesInvoices, _estimates, _boms, _workOrders, _mappings, _salesOrders, _creditNotes, _customerPayments, _vendorPayments, _fundTransfers, _reconciliations, _budgets, _periodCloses, _vouchers, _expenseClaims, _bankImports, _payComponents, _employees, _departments, _positions, _payGrades, _leaveBalances, _leaveRequests, _attendanceRecords, _payruns, _payrunEmployees, _payrunLines, _salarySlips, _holidays, _loanAdvances, _taxSlabs, _employeeCompensations, _projects, _projectPhases, _projectTasks, _timesheets, _projectExpenses, _taxObligations, _taxReturns, _taxExemptions, _withholdingCertificates, _eInvoices, _surveys, _fieldVisits, _inspections, _fieldWorkOrders, _fieldExpenses, _adminUsers, _userRoles, _branches, _approvalWorkflows, _numberSeries, _currencies, _auditLog, _leases, _prepaymentSchedules));
+        }
         using var db = _dbFactory.CreateDbContext();
-        var json = JsonSerializer.Serialize(new StoredState(_accounts, _entries, _history, _templates, _recurringEntries, _journalEvents, _intercompanyAllocations, _companies, _customers, _products, _vendors, _purchaseOrders, _grns, _fixedAssets, _taxAuthorities, _taxCodes, _taxRates, _warehouses, _stockLevels, _stockTransactions, _salesInvoices, _estimates, _boms, _workOrders, _mappings, _salesOrders, _creditNotes, _customerPayments, _vendorPayments, _fundTransfers, _reconciliations, _budgets, _periodCloses, _vouchers, _expenseClaims, _bankImports, _payComponents, _employees, _departments, _positions, _payGrades, _leaveBalances, _leaveRequests, _attendanceRecords, _payruns, _payrunEmployees, _payrunLines, _salarySlips, _holidays, _loanAdvances, _taxSlabs, _employeeCompensations, _projects, _projectPhases, _projectTasks, _timesheets, _projectExpenses, _taxObligations, _taxReturns, _taxExemptions, _withholdingCertificates, _eInvoices, _surveys, _fieldVisits, _inspections, _fieldWorkOrders, _fieldExpenses, _adminUsers, _userRoles, _branches, _approvalWorkflows, _numberSeries, _currencies, _auditLog, _leases, _prepaymentSchedules));
         var snapshot = db.AccountingStateSnapshots.Find(1);
         if (snapshot is null) db.AccountingStateSnapshots.Add(new AccountingStateSnapshot { Id = 1, Json = json, UpdatedAt = DateTime.UtcNow });
         else { snapshot.Json = json; snapshot.UpdatedAt = DateTime.UtcNow; }
@@ -4983,7 +5732,7 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
                 "Payroll Taxes Accrued" or "Payroll Income Tax Withholding Payable" => "21400",
                 "EOBI & Social Security Accrued" or "EOBI & Social Security Payable" => "21500",
                 "Provident Fund Accrued" or "Provident Fund & Pension Payable" => "21510",
-                "Pension Fund Accrued" => "21500",
+                "Pension Fund Accrued" => "21510",
                 "Taxes" or "Sales Tax / Output VAT Payable" or "Output Tax" => "22000",
                 "Purchase Input VAT / Recoverable Tax" or "Input Tax" or "Input VAT on Operating Expenses" => "14100",
                 "Import VAT & Customs Duty Tax Clearing" or "Import Tax on Inventory" => "14120",
@@ -5000,9 +5749,10 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
                 "Non-Recoverable Purchase Tax & Duty Expense" or "Non-Recoverable Tax Expense" => "61700",
                 "Corporate Income Tax Provision Expense" or "Corporate Income Tax Expense" => "61800",
                 "Deferred Revenue" => "23000",
-                "Sales" => "41100",
-                "Sales Discount" => "41200",
-                "Sales Returns" => "41300",
+                "Sales" or "Product Sales Revenue" => "41100",
+                "Service Revenue" => "41200",
+                "Sales Discount" => "41300",
+                "Sales Returns" => "41400",
                 "Cost of Goods Sold" => "51000",
                 "Purchase Discounts" => "51100",
                 "Purchase Returns" => "51200",
@@ -5463,6 +6213,7 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
             new AdminUser { UserName = "inventory", FullName = "David Chen", Email = "inventory@acme.com", Role = "Warehouse Manager", Status = UserStatus.Active, LastLogin = DateTime.UtcNow, CompanyId = companyId },
             new AdminUser { UserName = "manufacturing", FullName = "Alex Rivera", Email = "manufacturing@acme.com", Role = "Production Engineer", Status = UserStatus.Active, LastLogin = DateTime.UtcNow, CompanyId = companyId },
             new AdminUser { UserName = "auditor", FullName = "Amina Al-Mansoor", Email = "auditor@acme.com", Role = "External Auditor", Status = UserStatus.Active, LastLogin = DateTime.UtcNow, CompanyId = companyId },
+            new AdminUser { UserName = "hr", FullName = "Hina Tariq", Email = "hr@acme.com", Role = "HR Officer", Status = UserStatus.Active, LastLogin = DateTime.UtcNow, CompanyId = companyId },
         ]);
 
         // ── Roles ────────────────────────────────────────────────────────────
@@ -5470,6 +6221,7 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
         _userRoles.AddRange([
             new UserRole { Name = "Finance admin", Description = "Full access across all modules", Permissions = allPerms, CompanyId = companyId },
             new UserRole { Name = "Senior Accountant", Description = "Accounting, banking, and reporting", Permissions = new List<string> { "Dashboard", "Sales", "Procurement", "Banking", "Accounting", "Inventory", "Analytics" }, CompanyId = companyId },
+            new UserRole { Name = "HR Officer", Description = "HR and payroll operations, attendance, and salary sheet generation", Permissions = new List<string> { "Dashboard", "Payroll" }, CompanyId = companyId },
             new UserRole { Name = "Warehouse Manager", Description = "Procurement, multi-warehouse, and logistics", Permissions = new List<string> { "Dashboard", "Procurement", "Inventory", "Analytics" }, CompanyId = companyId },
             new UserRole { Name = "Production Engineer", Description = "BOM, work orders, and job costing", Permissions = new List<string> { "Dashboard", "Inventory", "Manufacturing", "Projects", "Analytics" }, CompanyId = companyId },
             new UserRole { Name = "External Auditor", Description = "Read-only financial review and compliance", Permissions = new List<string> { "Dashboard", "Accounting", "Compliance", "Analytics", "Administration" }, CompanyId = companyId },
@@ -5491,10 +6243,14 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
 
         // ── Number Series ────────────────────────────────────────────────────
         _numberSeries.AddRange([
-            new NumberSeries { Name = "Invoice", Prefix = "INV-", NextNumber = 1001, Format = "INV-1001", Active = true, CompanyId = companyId },
-            new NumberSeries { Name = "Bill", Prefix = "BILL-", NextNumber = 501, Format = "BILL-0501", Active = true, CompanyId = companyId },
-            new NumberSeries { Name = "Journal Entry", Prefix = "JE-", NextNumber = 2001, Format = "JE-2001", Active = true, CompanyId = companyId },
-            new NumberSeries { Name = "Payment Receipt", Prefix = "RCPT-", NextNumber = 301, Format = "RCPT-0301", Active = true, CompanyId = companyId },
+            new NumberSeries { Name = "Invoice", Prefix = "INV-", NextNumber = 1, Format = "INV-00001", Active = true, CompanyId = companyId },
+            new NumberSeries { Name = "Bill", Prefix = "BILL-", NextNumber = 1, Format = "BILL-00001", Active = true, CompanyId = companyId },
+            new NumberSeries { Name = "Journal Entry", Prefix = "JE-", NextNumber = 1, Format = "JE-00001", Active = true, CompanyId = companyId },
+            new NumberSeries { Name = "Payment Receipt", Prefix = "RCPT-", NextNumber = 1, Format = "RCPT-00001", Active = true, CompanyId = companyId },
+            new NumberSeries { Name = "Credit Note", Prefix = "CN-", NextNumber = 1, Format = "CN-00001", Active = true, CompanyId = companyId },
+            new NumberSeries { Name = "Debit Note", Prefix = "DN-", NextNumber = 1, Format = "DN-00001", Active = true, CompanyId = companyId },
+            new NumberSeries { Name = "Purchase Order", Prefix = "PO-", NextNumber = 1, Format = "PO-00001", Active = true, CompanyId = companyId },
+            new NumberSeries { Name = "Work Order", Prefix = "WO-", NextNumber = 1, Format = "WO-00001", Active = true, CompanyId = companyId },
         ]);
 
         // ── Currencies ───────────────────────────────────────────────────────
@@ -6655,6 +7411,101 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
         }
     }
 
+    public bool PostPayrunToGL(Guid payrunId, out JournalEntry? je, out string? error)
+    {
+        lock (_lock)
+        {
+            je = null;
+            error = null;
+            var payrun = _payruns.FirstOrDefault(p => p.Id == payrunId);
+            if (payrun == null)
+            {
+                error = "Payrun not found.";
+                return false;
+            }
+            if (payrun.Status == PayrunStatus.Posted)
+            {
+                error = "Payrun is already posted to the General Ledger.";
+                return false;
+            }
+
+            var empIds = _payrunEmployees.Where(pe => pe.PayrunId == payrunId).Select(pe => pe.Id).ToHashSet();
+            var slips = _salarySlips.Where(s => empIds.Contains(s.PayrunEmployeeId)).ToList();
+            if (slips.Count == 0)
+            {
+                error = "No salary slips found for this payrun.";
+                return false;
+            }
+
+            decimal totalGrossAll = slips.Sum(s => s.GrossEarnings);
+            decimal totalDeductionsAll = slips.Sum(s => s.TotalDeductions);
+            decimal totalEmployerAll = slips.Sum(s => s.EmployerContribs?.Sum(c => c.Amount) ?? 0);
+
+            var salaryExpAccountId = GetMappedAccount("Payroll Expense") != Guid.Empty ? GetMappedAccount("Payroll Expense") : _accounts.FirstOrDefault(a => a.Code == "61200")?.Id ?? Guid.Empty;
+            var employerExpAccountId = GetMappedAccount("Employer Payroll Contributions Expense") != Guid.Empty ? GetMappedAccount("Employer Payroll Contributions Expense") : _accounts.FirstOrDefault(a => a.Code == "61250")?.Id ?? salaryExpAccountId;
+            var accruedSalAccountId = GetMappedAccount("Accrued Salaries") != Guid.Empty ? GetMappedAccount("Accrued Salaries") : _accounts.FirstOrDefault(a => a.Code == "21300")?.Id ?? Guid.Empty;
+            var taxPayableAccountId = GetMappedAccount("Payroll Taxes Accrued") != Guid.Empty ? GetMappedAccount("Payroll Taxes Accrued") : _accounts.FirstOrDefault(a => a.Code == "21400")?.Id ?? Guid.Empty;
+            var eobiPayableAccountId = GetMappedAccount("EOBI & Social Security Accrued") != Guid.Empty ? GetMappedAccount("EOBI & Social Security Accrued") : _accounts.FirstOrDefault(a => a.Code == "21500")?.Id ?? taxPayableAccountId;
+            var pfPayableAccountId = GetMappedAccount("Provident Fund Accrued") != Guid.Empty ? GetMappedAccount("Provident Fund Accrued") : _accounts.FirstOrDefault(a => a.Code == "21510")?.Id ?? eobiPayableAccountId;
+
+            var netPayCredit = totalGrossAll - totalDeductionsAll;
+            var taxCredit = slips.SelectMany(s => s.Deductions).Where(d => d.Category.Contains("Tax", StringComparison.OrdinalIgnoreCase) || d.Name.Contains("Tax", StringComparison.OrdinalIgnoreCase)).Sum(d => d.Amount);
+            var eobiCredit = slips.SelectMany(s => s.Deductions).Where(d => d.Category.Contains("Social", StringComparison.OrdinalIgnoreCase) || d.Name.Contains("EOBI", StringComparison.OrdinalIgnoreCase) || d.Name.Contains("Social", StringComparison.OrdinalIgnoreCase)).Sum(d => d.Amount) + totalEmployerAll;
+            var otherCredit = totalDeductionsAll - (taxCredit + (eobiCredit - totalEmployerAll));
+            if (otherCredit < 0) otherCredit = 0;
+            if (taxCredit == 0 && eobiCredit == totalEmployerAll && totalDeductionsAll > 0)
+            {
+                taxCredit = totalDeductionsAll;
+            }
+
+            var lines = new List<JournalLine>
+            {
+                new JournalLine(salaryExpAccountId, totalGrossAll, 0, $"Gross Salaries & Allowances: {payrun.PayrunNumber}", null, "USD", 1, payrun.CompanyId),
+            };
+
+            if (totalEmployerAll > 0)
+            {
+                lines.Add(new JournalLine(employerExpAccountId, totalEmployerAll, 0, $"Employer Statutory Contributions: {payrun.PayrunNumber}", null, "USD", 1, payrun.CompanyId));
+            }
+
+            lines.Add(new JournalLine(accruedSalAccountId, 0, netPayCredit, $"Net salaries payable: {payrun.PayrunNumber}", null, "USD", 1, payrun.CompanyId));
+
+            if (taxCredit > 0)
+            {
+                lines.Add(new JournalLine(taxPayableAccountId, 0, taxCredit, $"Income tax withholding payable: {payrun.PayrunNumber}", null, "USD", 1, payrun.CompanyId));
+            }
+
+            if (eobiCredit > 0)
+            {
+                lines.Add(new JournalLine(eobiPayableAccountId, 0, eobiCredit, $"EOBI & Social Security payable: {payrun.PayrunNumber}", null, "USD", 1, payrun.CompanyId));
+            }
+
+            if (otherCredit > 0)
+            {
+                lines.Add(new JournalLine(pfPayableAccountId, 0, otherCredit, $"Provident fund & voluntary deductions: {payrun.PayrunNumber}", null, "USD", 1, payrun.CompanyId));
+            }
+
+            je = new JournalEntry
+            {
+                Date = DateOnly.FromDateTime(DateTime.Today),
+                Reference = $"PAYRUN-{payrun.PayrunNumber}",
+                Description = $"Payroll: {payrun.PayrunNumber} | {payrun.PeriodStart:yyyy-MM-dd} to {payrun.PeriodEnd:yyyy-MM-dd} | {slips.Count} employees",
+                TransactionType = TransactionType.Payroll,
+                CompanyId = payrun.CompanyId,
+                Status = JournalStatus.Posted,
+                Lines = lines
+            };
+
+            _entries.Add(je);
+            payrun.JournalEntryId = je.Id;
+            payrun.PostedAt = DateTime.UtcNow;
+            payrun.Status = PayrunStatus.Posted;
+
+            Persist();
+            return true;
+        }
+    }
+
     public List<SalarySlip> GetSalarySlips(Guid? payrunId = null, Guid? employeeId = null, Guid? companyId = null)
     {
         var query = _salarySlips.AsEnumerable();
@@ -7259,19 +8110,19 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
     public string NextInspectionNumber()
     {
         var numbers = _inspections.Select(i => i.InspectionNumber).Where(n => n.StartsWith("INS-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0);
-        return $"INS-{(numbers.Max() + 1):D4}";
+        return $"INS-{(numbers.Max() + 1):D5}";
     }
 
     public string NextFieldWorkOrderNumber()
     {
         var numbers = _fieldWorkOrders.Select(w => w.WorkOrderNumber).Where(n => n.StartsWith("FWO-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0);
-        return $"FWO-{(numbers.Max() + 1):D4}";
+        return $"FWO-{(numbers.Max() + 1):D5}";
     }
 
     public string NextFieldExpenseNumber()
     {
         var numbers = _fieldExpenses.Select(e => e.ExpenseNumber).Where(n => n.StartsWith("FEX-") && int.TryParse(n[4..], out _)).Select(n => int.Parse(n[4..])).DefaultIfEmpty(0);
-        return $"FEX-{(numbers.Max() + 1):D4}";
+        return $"FEX-{(numbers.Max() + 1):D5}";
     }
 
     public bool SetEInvoiceStatus(Guid id, EInvoiceStatus status, out EInvoice? invoice, out string? error)
@@ -7998,6 +8849,7 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
                 InterestAccountId = request.InterestAccountId,
                 CashAccountId = request.CashAccountId,
                 CompanyId = request.CompanyId,
+                BalanceSheetLiability = pv,
                 IsActive = true
             };
             
@@ -8070,6 +8922,17 @@ _bankImports.Clear(); _bankImports.AddRange(state.BankImports ?? []);
             var totalExpense = currentMonth.TotalExpense;
             if (totalExpense > 0)
                 entry.Lines.Add(new JournalLine(depreciationAcc, totalExpense, 0, "Operating lease expense", null, null, 1, lease.CompanyId));
+        }
+
+        // Credit side: Lease Liability (principal reduction) or Cash/Bank for payments
+        decimal totalDebit = entry.Lines.Sum(l => l.Debit);
+        decimal totalCredit = entry.Lines.Sum(l => l.Credit);
+        if (totalDebit > totalCredit)
+        {
+            var creditAmount = totalDebit - totalCredit;
+            // Use cash account if set, otherwise credit the lease liability
+            var creditAcc = (cashAcc != Guid.Empty) ? cashAcc : liabilityAcc;
+            entry.Lines.Add(new JournalLine(creditAcc, 0, creditAmount, "Lease payment / liability", null, null, 1, lease.CompanyId));
         }
 
         // Update lease balances

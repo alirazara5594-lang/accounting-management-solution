@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Sparkles, X, Send, Bot, User,
   Lightbulb, Compass, ShieldAlert,
-  ArrowRight, MessageSquarePlus
+  ArrowRight, MessageSquarePlus, HelpCircle
 } from 'lucide-react';
 
 interface AiAssistantDrawerProps {
@@ -138,6 +138,7 @@ const KNOWLEDGE_BASE: { keywords: string[]; answer: string; targetPage?: string;
 
 export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ activePage, onNavigate, onOpenFeedback }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [askMenuOpen, setAskMenuOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(() => {
     return [
       {
@@ -181,10 +182,23 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ activePage
       if (e.key === 'Escape' && isOpen) {
         setIsOpen(false);
       }
+      if (e.key === 'Escape' && askMenuOpen) {
+        setAskMenuOpen(false);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [messages, isOpen]);
+  }, [messages, isOpen, askMenuOpen]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (askMenuOpen && !(e.target as HTMLElement).closest('.ask-menu-container')) {
+        setAskMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [askMenuOpen]);
 
   const handleSend = (textToSend?: string) => {
     const query = (textToSend || input).trim();
@@ -270,33 +284,55 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ activePage
 
   return (
     <>
-      {/* Floating Trigger Buttons (Bottom-Right) - Visible only when drawer is closed */}
+      {/* Floating Ask Button (Bottom-Right) */}
       {!isOpen && (
-        <div className="fixed bottom-6 right-6 z-40 flex items-center gap-3">
-          {onOpenFeedback && (
+        <div className="fixed bottom-6 right-6 z-40 ask-menu-container">
+          <div className="relative">
+            {askMenuOpen && (
+              <div className="absolute bottom-16 right-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden w-52 mb-2">
+                <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Quick Access</p>
+                </div>
+                <button
+                  onClick={() => { setIsOpen(true); setAskMenuOpen(false); }}
+                  className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-teal-50 dark:hover:bg-teal-950/30 transition-colors cursor-pointer"
+                >
+                  <div className="p-1.5 rounded-lg bg-teal-100 dark:bg-teal-900/40">
+                    <Sparkles className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-100">AMS Assistant</p>
+                    <p className="text-[10px] text-slate-400">Ask questions & get help</p>
+                  </div>
+                </button>
+                {onOpenFeedback && (
+                  <button
+                    onClick={() => { onOpenFeedback(); setAskMenuOpen(false); }}
+                    className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors cursor-pointer border-t border-slate-100 dark:border-slate-700/50"
+                  >
+                    <div className="p-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/40">
+                      <MessageSquarePlus className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100">Feedback</p>
+                      <p className="text-[10px] text-slate-400">Send suggestions & bugs</p>
+                    </div>
+                  </button>
+                )}
+              </div>
+            )}
             <button
-              onClick={onOpenFeedback}
-              className="flex items-center gap-2 px-4 py-3 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-full shadow-2xl border border-slate-200 dark:border-slate-700 transition-all duration-200 transform hover:scale-105 active:scale-95 cursor-pointer font-bold text-xs"
-              title="Submit Feedback & Feature Request"
-              style={{ boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1)' }}
+              onClick={() => setAskMenuOpen(o => !o)}
+              className="flex items-center gap-2.5 px-5 py-3 bg-gradient-to-r from-teal-600 to-indigo-600 hover:from-teal-500 hover:to-indigo-500 text-white rounded-full shadow-2xl transition-all duration-200 transform hover:scale-105 active:scale-95 group border border-white/20 cursor-pointer"
+              title="Ask for Help or Feedback"
+              style={{ boxShadow: '0 10px 25px -5px rgba(13, 148, 136, 0.4), 0 8px 10px -6px rgba(13, 148, 136, 0.4)' }}
             >
-              <MessageSquarePlus className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-              <span>Feedback</span>
+              <div className="relative">
+                <HelpCircle className="w-5 h-5" />
+              </div>
+              <span className="font-bold text-sm tracking-wide">Ask</span>
             </button>
-          )}
-
-          <button
-            onClick={() => setIsOpen(true)}
-            className="flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-teal-600 to-indigo-600 hover:from-teal-500 hover:to-indigo-500 text-white rounded-full shadow-2xl transition-all duration-200 transform hover:scale-105 active:scale-95 group border border-white/20 cursor-pointer"
-            title="Open AMS Assistant"
-            style={{ boxShadow: '0 10px 25px -5px rgba(13, 148, 136, 0.4), 0 8px 10px -6px rgba(13, 148, 136, 0.4)' }}
-          >
-            <div className="relative">
-              <Sparkles className="w-5 h-5 animate-pulse text-amber-300" />
-              <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
-            </div>
-            <span className="font-bold text-sm tracking-wide">AMS Assistant</span>
-          </button>
+          </div>
         </div>
       )}
 

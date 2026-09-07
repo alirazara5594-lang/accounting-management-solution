@@ -11,8 +11,10 @@ public class VendorBillsController(AccountingStore store) : ControllerBase
     [HttpGet]
     public IActionResult GetBills([FromQuery] Guid? companyId)
     {
-        var query = store.VendorBills.AsEnumerable();
-        if (companyId.HasValue) query = query.Where(a => a.CompanyId == companyId.Value);
+        var query = store.VendorBills
+            .Where(a => !companyId.HasValue || a.CompanyId == companyId.Value)
+            .OrderByDescending(b => b.Date)
+            .ThenByDescending(b => b.BillNumber);
         return Ok(query);
     }
 
@@ -42,6 +44,16 @@ public class VendorBillsController(AccountingStore store) : ControllerBase
         if (store.PostVendorBill(id, out var error))
         {
             return Ok(new { message = "Vendor Bill posted to Accounts Payable." });
+        }
+        return BadRequest(new { Error = error });
+    }
+
+    [HttpPost("{id}/void")]
+    public IActionResult VoidBill(Guid id)
+    {
+        if (store.VoidVendorBill(id, out var error))
+        {
+            return Ok(new { message = "Vendor Bill voided and ledger reversal posted." });
         }
         return BadRequest(new { Error = error });
     }

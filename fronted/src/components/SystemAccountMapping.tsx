@@ -3,8 +3,9 @@ import { useCoaStore } from '../stores';
 import {
   Save, RefreshCw, HelpCircle,
   TrendingUp, ShoppingCart, Package, Building2, Users, Globe,
-  Edit3, Check, Lock, Percent
+  Lock, Percent, BookOpen, CheckCircle2, Scale, Layers
 } from 'lucide-react';
+import { KpiCard, KpiGrid } from './ui/kpi-card';
 
 interface Account {
   id: string;
@@ -27,31 +28,15 @@ interface SystemAccountMappingProps {
 export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ accounts, close, notify }) => {
   const fetchMappings = useCoaStore(s => s.fetchMappings);
   const saveMapping = useCoaStore(s => s.saveMapping);
-  const saveAccountStore = useCoaStore(s => s.saveAccount);
-  const fetchAccountsStore = useCoaStore(s => s.fetchAccounts);
 
   const [activeCategory, setActiveCategory] = useState<'all' | 'taxes' | 'sales' | 'purchases' | 'inventory' | 'assets' | 'payroll' | 'intercompany'>('all');
   const [saving, setSaving] = useState(false);
-
-  // Quick Rename / Edit Modal State
-  const [editingAccount, setEditingAccount] = useState<Account | null>(null);
-  const [renameForm, setRenameForm] = useState<{
-    name: string;
-    isSystem: boolean;
-    currency: string;
-    description: string;
-  }>({
-    name: '',
-    isSystem: true,
-    currency: 'USD',
-    description: '',
-  });
-  const [savingAccount, setSavingAccount] = useState(false);
 
   const [mappings, setMappings] = useState<Record<string, string>>({
     // Sales & AR
     arAccountId: '',
     revenueAccountId: '',
+    serviceRevenueAccountId: '',
     discountAccountId: '',
     salesReturnsAccountId: '',
     allowanceAccountId: '',
@@ -129,9 +114,10 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
       setMappings({
         // Sales & AR
         arAccountId: getAccId('Customer Receivables', '12000'),
-        revenueAccountId: getAccId('Sales', '41100'),
-        discountAccountId: getAccId('Sales Discount', '41200'),
-        salesReturnsAccountId: getAccId('Sales Returns', '41300'),
+        revenueAccountId: getAccId('Sales', '41100') || getAccId('Product Sales Revenue', '41100'),
+        serviceRevenueAccountId: getAccId('Service Revenue', '41200'),
+        discountAccountId: getAccId('Sales Discount', '41300'),
+        salesReturnsAccountId: getAccId('Sales Returns', '41400'),
         allowanceAccountId: getAccId('Allowance for Doubtful Accounts', '12100'),
         deferredRevenueAccountId: getAccId('Deferred Revenue', '23000'),
 
@@ -203,41 +189,6 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
   const revenueAccounts = useMemo(() => accounts.filter(a => a.type === 'Revenue' || a.type === 'ContraRevenue'), [accounts]);
   const expenseAccounts = useMemo(() => accounts.filter(a => a.type === 'Expense' || a.type === 'ContraExpense'), [accounts]);
 
-  const openRenameModal = (accountId: string) => {
-    const acc = accounts.find(a => a.id === accountId);
-    if (!acc) return;
-    setEditingAccount(acc);
-    setRenameForm({
-      name: acc.name,
-      isSystem: acc.isSystem !== false,
-      currency: acc.currency || 'USD',
-      description: acc.description || '',
-    });
-  };
-
-  const handleSaveRenamedAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingAccount) return;
-    setSavingAccount(true);
-    try {
-      const updatedData = {
-        ...editingAccount,
-        name: renameForm.name.trim(),
-        isSystem: renameForm.isSystem,
-        currency: renameForm.currency,
-        description: renameForm.description,
-      };
-      await saveAccountStore(updatedData, editingAccount.id);
-      await fetchAccountsStore();
-      notify?.(`✓ Successfully renamed account ${editingAccount.code} to "${renameForm.name}"`);
-      setEditingAccount(null);
-    } catch (err: any) {
-      notify?.(err.message || 'Failed to update account details');
-    } finally {
-      setSavingAccount(false);
-    }
-  };
-
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -245,6 +196,8 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
         // Sales & AR
         { key: 'Customer Receivables', id: mappings.arAccountId },
         { key: 'Sales', id: mappings.revenueAccountId },
+        { key: 'Product Sales Revenue', id: mappings.revenueAccountId },
+        { key: 'Service Revenue', id: mappings.serviceRevenueAccountId },
         { key: 'Sales Discount', id: mappings.discountAccountId },
         { key: 'Sales Returns', id: mappings.salesReturnsAccountId },
         { key: 'Allowance for Doubtful Accounts', id: mappings.allowanceAccountId },
@@ -334,8 +287,9 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
         // Sales & AR
         arAccountId: getSeed('12000'),
         revenueAccountId: getSeed('41100'),
-        discountAccountId: getSeed('41200'),
-        salesReturnsAccountId: getSeed('41300'),
+        serviceRevenueAccountId: getSeed('41200'),
+        discountAccountId: getSeed('41300'),
+        salesReturnsAccountId: getSeed('41400'),
         allowanceAccountId: getSeed('12100'),
         deferredRevenueAccountId: getSeed('23000'),
 
@@ -401,8 +355,21 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
     }
   };
 
-  const configuredCount = Object.values(mappings).filter(Boolean).length;
   const totalCount = Object.keys(mappings).length;
+  const configuredCount = Object.values(mappings).filter(Boolean).length;
+
+  const taxKeys = useMemo(() => [
+    'salesTaxAccountId', 'expenseInputTaxAccountId', 'nonRecoverableTaxAccountId',
+    'inventoryImportTaxAccountId', 'importTaxPayableAccountId', 'capitalGoodsTaxAccountId',
+    'assetDisposalTaxAccountId', 'whtReceivableAccountId', 'whtPayableAccountId',
+    'corporateTaxExpenseAccountId', 'corporateTaxPayableAccountId', 'deferredTaxAssetAccountId',
+    'deferredTaxLiabilityAccountId', 'rcmOutputTaxAccountId', 'rcmInputTaxAccountId'
+  ], []);
+
+  const taxConfigured = useMemo(() => taxKeys.filter(k => !!mappings[k]).length, [mappings, taxKeys]);
+  const operationalTotal = totalCount - taxKeys.length;
+  const opConfigured = configuredCount - taxConfigured;
+  const completionPercentage = totalCount > 0 ? Math.round((configuredCount / totalCount) * 100) : 0;
 
   const renderField = (label: string, value: string, onChangeKey: string, accountList: Account[], hint: string) => {
     const selectedAcc = accounts.find(a => a.id === value);
@@ -421,7 +388,7 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
           <select
             value={value}
             onChange={e => setMappings(prev => ({ ...prev, [onChangeKey]: e.target.value }))}
-            className="flex-1 px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl outline-none text-xs text-[var(--color-text)] transition-colors focus:border-teal-500 font-mono"
+            className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl outline-none text-xs text-[var(--color-text)] transition-colors focus:border-teal-500 font-mono"
           >
             <option value="">-- Select GL Posting Account --</option>
             {accountList.map(a => (
@@ -430,52 +397,88 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
               </option>
             ))}
           </select>
-
-          {value && (
-            <button
-              type="button"
-              onClick={() => openRenameModal(value)}
-              className="px-2.5 py-2 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 rounded-xl text-xs font-semibold flex items-center gap-1 shrink-0 transition-colors cursor-pointer shadow-2xs"
-              title="Rename or edit this account's properties"
-            >
-              <Edit3 className="w-3.5 h-3.5" /> Rename
-            </button>
-          )}
         </div>
       </div>
     );
   };
 
   return (
-    <div className="p-6 max-w-[1300px] mx-auto space-y-6 animate-in fade-in">
-      {/* Top Header */}
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-4 flex-wrap gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-[var(--color-text-strong)] flex items-center gap-2">
-            <Building2 className="w-5 h-5 text-teal-600" />
-            System Chart of Accounts Mapping Engine
-          </h2>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">
-            Map operational ERP workflows (Sales, Bills, Taxes, Inventory, Assets, Payroll) to your General Ledger with 1-click renaming.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleReset}
-            className="px-3 py-2 border border-[var(--color-border)] rounded-xl text-xs font-semibold hover:bg-[var(--color-surface-muted)] text-[var(--color-text)] flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" /> Reset Defaults
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
-          >
-            <Save className="w-3.5 h-3.5" /> {saving ? 'Saving Mappings...' : 'Save COA Mapping'}
-          </button>
+    <div className="p-6 max-w-[1400px] mx-auto space-y-6 animate-in fade-in">
+      {/* Page Header — AMS Signature Hero Band */}
+      <div className="relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+        <div className="absolute inset-0 bg-gradient-to-r from-teal-500/10 via-teal-500/[0.03] to-transparent pointer-events-none" />
+        <div className="absolute -right-10 -top-16 w-56 h-56 rounded-full bg-teal-500/10 blur-3xl pointer-events-none" />
+        <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 px-5 py-4">
+          <div className="flex items-center gap-4">
+            <div className="relative h-14 w-14 shrink-0">
+              <div className="absolute inset-[6px] rotate-45 rounded-[12px] shadow-xl bg-gradient-to-br from-teal-500 to-emerald-700" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Building2 className="w-6 h-6 text-white" />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center gap-2.5">
+                <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-strong)]">
+                  System Chart of Accounts Mapping Engine
+                </h1>
+                <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-teal-500/25 bg-teal-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-teal-500 animate-pulse" /> Live GL Engine
+                </span>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                Automate default General Ledger debit/credit postings across Sales, Purchasing, Taxes, Inventory, Fixed Assets, and Payroll.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleReset}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-[var(--color-border)] rounded-xl text-xs font-semibold hover:bg-[var(--color-surface-muted)] text-[var(--color-text)] transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Reset Defaults
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+            >
+              <Save className="w-4 h-4" /> {saving ? 'Saving Mappings...' : 'Save COA Mapping'}
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* 4-in-1 Top KPI Cards */}
+      <KpiGrid cols={4}>
+        <KpiCard
+          icon={BookOpen}
+          label="System Core GL Accounts"
+          value={`${totalCount} Accounts`}
+          desc="Standard GL posting keys"
+          tone="teal"
+        />
+        <KpiCard
+          icon={CheckCircle2}
+          label="Active Mappings"
+          value={`${configuredCount} / ${totalCount}`}
+          desc={`${completionPercentage}% Automated GL Coverage`}
+          tone="emerald"
+        />
+        <KpiCard
+          icon={Scale}
+          label="Tax & Statutory Accounts"
+          value={`${taxConfigured} / ${taxKeys.length}`}
+          desc="VAT, WHT, RCM & Corp Tax"
+          tone="indigo"
+        />
+        <KpiCard
+          icon={Layers}
+          label="Operational Workflows"
+          value={`${opConfigured} / ${operationalTotal}`}
+          desc="Sales, AP, COGS, Leases & HR"
+          tone="purple"
+        />
+      </KpiGrid>
 
       {/* Progress & Category Filters */}
       <div className="flex items-center justify-between flex-wrap gap-3 bg-[var(--color-surface-muted)] p-3 rounded-2xl border border-[var(--color-border)]">
@@ -576,14 +579,15 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
         {(activeCategory === 'all' || activeCategory === 'sales') && (
           <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm space-y-4 text-xs">
             <h3 className="font-bold text-sm text-[var(--color-text-strong)] flex items-center gap-2 border-b border-[var(--color-border)] pb-2.5">
-              <TrendingUp className="w-4 h-4 text-blue-600" /> Sales & Commercial Receivables
+              <TrendingUp className="w-4 h-4 text-blue-600" /> Sales & Commercial Receivables (Multi-Sector Revenue)
             </h3>
-            {renderField('Customer Receivables (AR)', mappings.arAccountId, 'arAccountId', assetAccounts, 'Code 12000')}
-            {renderField('Operating Revenue / Sales', mappings.revenueAccountId, 'revenueAccountId', revenueAccounts, 'Code 41100')}
-            {renderField('Sales Discounts', mappings.discountAccountId, 'discountAccountId', revenueAccounts, 'Code 41200')}
-            {renderField('Sales Returns & Allowances', mappings.salesReturnsAccountId, 'salesReturnsAccountId', revenueAccounts, 'Code 41300')}
-            {renderField('Allowance for Doubtful Accounts', mappings.allowanceAccountId, 'allowanceAccountId', assetAccounts, 'Code 12100')}
-            {renderField('Deferred / Unearned Revenue', mappings.deferredRevenueAccountId, 'deferredRevenueAccountId', liabilityAccounts, 'Code 23000')}
+            {renderField('Customer Receivables (AR) (Debit)', mappings.arAccountId, 'arAccountId', assetAccounts, 'Default Accounts Receivable | Code 12000')}
+            {renderField('Product Sales Revenue (Physical Goods) (Credit)', mappings.revenueAccountId, 'revenueAccountId', revenueAccounts, 'Physical inventory sales revenue | Code 41100')}
+            {renderField('Service Revenue & Consulting Fees (Credit)', mappings.serviceRevenueAccountId, 'serviceRevenueAccountId', revenueAccounts, 'Hourly, retainer & professional service revenue | Code 41200')}
+            {renderField('Sales Discounts & Allowances (Contra-Revenue)', mappings.discountAccountId, 'discountAccountId', revenueAccounts, 'Volume & promotional customer discounts | Code 41300')}
+            {renderField('Sales Returns & Concessions (Contra-Revenue)', mappings.salesReturnsAccountId, 'salesReturnsAccountId', revenueAccounts, 'Damaged product returns & allowances | Code 41400')}
+            {renderField('Allowance for Doubtful Accounts (Asset)', mappings.allowanceAccountId, 'allowanceAccountId', assetAccounts, 'Expected credit loss provision | Code 12100')}
+            {renderField('Deferred / Unearned Revenue (Liability)', mappings.deferredRevenueAccountId, 'deferredRevenueAccountId', liabilityAccounts, 'Advance billing for future service delivery | Code 23000')}
           </div>
         )}
 
@@ -673,104 +677,8 @@ export const SystemAccountMapping: React.FC<SystemAccountMappingProps> = ({ acco
           </button>
         </div>
       </div>
-
-      {/* Quick Rename & Edit Account Modal */}
-      {editingAccount && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
-              <div>
-                <p className="text-[10px] font-bold text-teal-600 uppercase tracking-wider font-mono">
-                  Account {editingAccount.code} • {editingAccount.type}
-                </p>
-                <h3 className="text-base font-bold text-[var(--color-text-strong)]">
-                  Rename & Edit Account
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditingAccount(null)}
-                className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)] rounded-lg text-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveRenamedAccount} className="space-y-4 text-xs">
-              <div className="space-y-1">
-                <label className="font-bold text-[var(--color-text-strong)]">Account Name</label>
-                <input
-                  required
-                  value={renameForm.name}
-                  onChange={e => setRenameForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. Accounts Receivable - Main Trade Debtors"
-                  className="w-full px-3 py-2 bg-[var(--color-surface-muted)] border border-[var(--color-border)] rounded-xl outline-none text-xs text-[var(--color-text)] focus:border-teal-500 font-semibold"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-bold text-[var(--color-text-strong)]">Currency</label>
-                  <select
-                    value={renameForm.currency}
-                    onChange={e => setRenameForm(f => ({ ...f, currency: e.target.value }))}
-                    className="w-full px-3 py-2 bg-[var(--color-surface-muted)] border border-[var(--color-border)] rounded-xl outline-none text-xs text-[var(--color-text)] focus:border-teal-500"
-                  >
-                    <option value="PKR">PKR</option>
-                    <option value="USD">USD</option>
-                    <option value="EUR">EUR</option>
-                    <option value="GBP">GBP</option>
-                    <option value="AED">AED</option>
-                    <option value="SAR">SAR</option>
-                    <option value="CAD">CAD</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1 flex flex-col justify-end">
-                  <label className="flex items-center gap-2 p-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl cursor-pointer font-bold text-amber-800 dark:text-amber-300">
-                    <input
-                      type="checkbox"
-                      checked={renameForm.isSystem}
-                      onChange={e => setRenameForm(f => ({ ...f, isSystem: e.target.checked }))}
-                      className="rounded text-amber-600"
-                    />
-                    <span>🔒 Secured</span>
-                  </label>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="font-bold text-[var(--color-text-strong)]">Description / Notes</label>
-                <textarea
-                  value={renameForm.description}
-                  onChange={e => setRenameForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="Optional ledger remarks..."
-                  className="w-full px-3 py-2 bg-[var(--color-surface-muted)] border border-[var(--color-border)] rounded-xl outline-none text-xs text-[var(--color-text)] focus:border-teal-500 resize-none h-16"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
-                <button
-                  type="button"
-                  onClick={() => setEditingAccount(null)}
-                  className="px-3 py-2 border border-[var(--color-border)] rounded-xl font-semibold hover:bg-[var(--color-surface-muted)] text-[var(--color-text)] cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingAccount || !renameForm.name.trim()}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold shadow-xs flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  {savingAccount ? 'Saving...' : 'Update & Apply'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
 export default SystemAccountMapping;
+

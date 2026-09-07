@@ -84,3 +84,192 @@ div[class*="border-b"] > div[class*="flex items-center gap-2"] {
   flex-shrink: 0 !important;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   GLOBAL PERMANENT FIX 3: Button & Form Text Overlapping Prevention
+   Guarantees buttons, badges, and tabs NEVER wrap onto multiple overlapping lines
+   ───────────────────────────────────────────────────────────────────────────── */
+button,
+.btn,
+.primary,
+.secondary,
+input[type="button"],
+input[type="submit"],
+button span,
+.btn span {
+  white-space: nowrap !important;
+}
+
+button,
+.btn,
+.primary,
+.secondary {
+  flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   GLOBAL PERMANENT FIX 4: Modal & Form Action Footers
+   Guarantees modal action buttons maintain standard heights and generous spacing
+   ───────────────────────────────────────────────────────────────────────────── */
+div[class*="border-t"][class*="justify-between"],
+.modal-footer {
+  gap: 12px !important;
+}
+
+div[class*="border-t"] button,
+.modal-footer button {
+  min-height: 36px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ENTERPRISE FORM DESIGN SYSTEM UTILITIES
+   Polished inputs, elevated section cards, and pill step tabs across all ERP forms
+   ───────────────────────────────────────────────────────────────────────────── */
+.erp-form-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  padding: 1.25rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.erp-form-card-muted {
+  background: color-mix(in srgb, var(--color-surface-muted) 40%, var(--color-surface));
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  padding: 1.25rem;
+}
+
+.erp-form-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-strong);
+  margin-bottom: 0.375rem;
+  letter-spacing: -0.01em;
+}
+
+.erp-form-input,
+.erp-form-select {
+  width: 100%;
+  height: 2.5rem;
+  padding: 0 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-strong);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  outline: none;
+  transition: all 0.15s ease-in-out;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.erp-form-input:focus,
+.erp-form-select:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.erp-form-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.erp-form-textarea {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-strong);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  outline: none;
+  transition: all 0.15s ease-in-out;
+  resize: vertical;
+}
+
+.erp-form-textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+.erp-step-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  border: 1px solid transparent;
+  color: var(--color-text-muted);
+  background: transparent;
+  transition: all 0.15s ease-in-out;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.erp-step-pill:hover {
+  color: var(--color-text-strong);
+  background: var(--color-surface-muted);
+}
+
+.erp-step-pill.active {
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+.erp-step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+.erp-step-pill.active .erp-step-num {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground, #ffffff);
+}
+
+/* Stepper Navigation Container - Absolutely zero scrollbars (up/down and left/right) */
+.erp-stepper-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface-muted) 30%, transparent);
+  overflow: hidden !important;
+  flex-wrap: wrap;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+.erp-stepper-nav::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* Global No Scrollbar Utility */
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+  overflow: hidden !important;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+

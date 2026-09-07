@@ -5,6 +5,7 @@ import { customersApi, type Customer } from './api/modules/customers.api';
 import { apiClient } from './api/client';
 import { useCompanyStore } from './stores';
 import { money } from './lib/currency';
+import { formatInvoiceNumber } from './lib/invoiceNumbering';
 import { downloadExcel, downloadCSV } from './lib/exportUtils';
 import { KpiCard, KpiGrid } from './components/ui/kpi-card';
 import { StatusChip } from './components/ui/status-chip';
@@ -15,6 +16,7 @@ import {
   CheckCircle2, Users, RefreshCw, BarChart3
 } from 'lucide-react';
 import { ExportDropdown } from './components/ExportDropdown';
+import { CompactSelect } from './components/CompactSelect';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -54,9 +56,17 @@ const emptyForm = {
   memo: '',
 };
 
-export function CustomerPaymentsWorkspace() {
+export function CustomerPaymentsWorkspace({
+  activeEntityId: propEntityId,
+  entities: propEntities = []
+}: {
+  activeEntityId?: string;
+  entities?: any[];
+} = {}) {
   const { payments, loading, fetchAll, create } = useCustomerPaymentsStore();
-  const { activeEntityId, entities, fetchCompanies } = useCompanyStore();
+  const companyStore = useCompanyStore();
+  const activeEntityId = propEntityId || companyStore.activeEntityId;
+  const entities = propEntities.length > 0 ? propEntities : companyStore.entities;
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -69,13 +79,33 @@ export function CustomerPaymentsWorkspace() {
   const [methodFilter, setMethodFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
 
+  // Listen for 1-click 'Record Payment' from Sales Workspace
+  useEffect(() => {
+    const raw = localStorage.getItem('ams_pending_customer_payment');
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        localStorage.removeItem('ams_pending_customer_payment');
+        if (parsed.customerId) {
+          setFormData(prev => ({
+            ...prev,
+            customerId: parsed.customerId,
+            invoiceId: parsed.invoiceId || '',
+            amount: parsed.amount ? String(parsed.amount) : prev.amount
+          }));
+          setIsModalOpen(true);
+        }
+      } catch {}
+    }
+  }, []);
+
   const activeCompany = useMemo(() => {
     return entities.find((e) => e.id === activeEntityId) || entities[0];
   }, [entities, activeEntityId]);
 
   const loadData = () => {
     fetchAll(activeEntityId);
-    fetchCompanies();
+    companyStore.fetchCompanies();
   };
 
   useEffect(() => {
@@ -92,7 +122,18 @@ export function CustomerPaymentsWorkspace() {
           apiClient<DepositAccount[]>('/customer-payments/deposit-accounts'),
         ]);
         setCustomers(custs);
-        setInvoices(invs.filter((i: any) => String(i.status).toLowerCase() !== 'paid' && String(i.status).toLowerCase() !== 'void'));
+        setInvoices(
+          invs.filter(
+            (i: any) =>
+              i.status !== 0 &&
+              i.status !== '0' &&
+              String(i.status).toLowerCase() !== 'draft' &&
+              String(i.status).toLowerCase() !== 'paid' &&
+              i.status !== 2 &&
+              String(i.status).toLowerCase() !== 'void' &&
+              i.status !== 3
+          )
+        );
         setDepositAccounts(accts);
         if (accts.length > 0 && !formData.depositToAccountId) {
           setFormData((prev) => ({ ...prev, depositToAccountId: accts[0].id }));
@@ -172,20 +213,31 @@ export function CustomerPaymentsWorkspace() {
   };
 
   const filteredPayments = useMemo(() => {
-    return payments.filter((p: any) => {
-      if (methodFilter !== 'all' && p.paymentMethod !== methodFilter) return false;
-      if (statusFilter !== 'all' && String(p.status).toLowerCase() !== statusFilter.toLowerCase()) return false;
+    return payments
+      .filter((p: any) => {
+        if (methodFilter !== 'all' && p.paymentMethod !== methodFilter) return false;
+        if (statusFilter !== 'all' && String(p.status).toLowerCase() !== statusFilter.toLowerCase()) return false;
 
-      if (query.trim()) {
-        const q = query.toLowerCase();
-        const matchesRef = (p.receiptNumber || '').toLowerCase().includes(q) || (p.reference || '').toLowerCase().includes(q);
-        const matchesCust = (p.customerName || p.customerId || '').toLowerCase().includes(q);
-        const matchesInv = (p.invoiceNumber || '').toLowerCase().includes(q);
-        const matchesBank = (p.depositToAccountName || '').toLowerCase().includes(q);
-        if (!matchesRef && !matchesCust && !matchesInv && !matchesBank) return false;
-      }
-      return true;
-    });
+        if (query.trim()) {
+          const q = query.toLowerCase();
+          const matchesRef = (p.receiptNumber || '').toLowerCase().includes(q) || (p.reference || '').toLowerCase().includes(q);
+          const matchesCust = (p.customerName || p.customerId || '').toLowerCase().includes(q);
+          const matchesInv = (p.invoiceNumber || '').toLowerCase().includes(q);
+          const matchesBank = (p.depositToAccountName || '').toLowerCase().includes(q);
+          if (!matchesRef && !matchesCust && !matchesInv && !matchesBank) return false;
+        }
+        return true;
+      })
+      .sort((a: any, b: any) => {
+        const dateA = a.date || a.paymentDate || a.createdAt || '';
+        const dateB = b.date || b.paymentDate || b.createdAt || '';
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA);
+        }
+        const numA = a.receiptNumber || a.reference || a.paymentNumber || '';
+        const numB = b.receiptNumber || b.reference || b.paymentNumber || '';
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' });
+      });
   }, [payments, query, methodFilter, statusFilter]);
 
   const totalReceived = filteredPayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
@@ -574,35 +626,33 @@ export function CustomerPaymentsWorkspace() {
 
               <div className="space-y-1">
                 <label className="text-xs font-bold text-[var(--color-text-strong)]">Customer *</label>
-                <select
+                <CompactSelect
                   value={formData.customerId}
-                  onChange={(e) => onCustomerChange(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] outline-none focus:border-blue-500"
-                  required
-                >
-                  <option value="">Select customer...</option>
-                  {customers.map((c: any) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} {c.customerNumber ? `(${c.customerNumber})` : ''}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => onCustomerChange(val)}
+                  options={customers.map((c: any) => ({
+                    value: c.id,
+                    label: `${c.name}${c.customerNumber ? ` (${c.customerNumber})` : ''}`
+                  }))}
+                  placeholder="Select customer..."
+                  className="w-full h-9"
+                />
               </div>
 
               <div className="space-y-1">
                 <label className="text-xs font-bold text-[var(--color-text-strong)]">Apply to Invoice (Optional)</label>
-                <select
+                <CompactSelect
                   value={formData.invoiceId}
-                  onChange={(e) => onInvoiceChange(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] outline-none focus:border-blue-500"
-                >
-                  <option value="">On-Account (Unapplied collection)</option>
-                  {filteredInvoices.map((inv: any) => (
-                    <option key={inv.id} value={inv.id}>
-                      {inv.invoiceNumber} — Balance Due: {money(inv.amountDue ?? inv.totalAmount)} (Date: {inv.invoiceDate || inv.date})
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => onInvoiceChange(val)}
+                  options={[
+                    { value: '', label: 'On-Account (Unapplied collection)' },
+                    ...filteredInvoices.map((inv: any, idx: number) => ({
+                      value: inv.id,
+                      label: `${formatInvoiceNumber(inv.invoiceNumber || inv.reference, idx + 1)} — Due: ${money(inv.amountDue ?? inv.totalAmount)} (${(inv.invoiceDate || inv.date || '').slice(0, 10)})`
+                    }))
+                  ]}
+                  placeholder="Select invoice to apply..."
+                  className="w-full h-9"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -634,30 +684,23 @@ export function CustomerPaymentsWorkspace() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-[var(--color-text-strong)]">Payment Method *</label>
-                  <select
+                  <CompactSelect
                     value={formData.paymentMethod}
-                    onChange={(e) => onMethodChange(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] outline-none focus:border-blue-500"
-                    required
-                  >
-                    {PAYMENT_METHODS.map((m) => (
-                      <option key={m.value} value={m.value}>{m.label}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => onMethodChange(val)}
+                    options={PAYMENT_METHODS.map((m) => ({ value: m.value, label: m.label }))}
+                    placeholder="Select payment method..."
+                    className="w-full h-9"
+                  />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-[var(--color-text-strong)]">Deposit To Account *</label>
-                  <select
+                  <CompactSelect
                     value={formData.depositToAccountId}
-                    onChange={(e) => setFormData({ ...formData, depositToAccountId: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] outline-none focus:border-blue-500"
-                    required
-                  >
-                    <option value="">Select funding account...</option>
-                    {depositAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>{a.code} - {a.name}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setFormData({ ...formData, depositToAccountId: val })}
+                    options={depositAccounts.map((a) => ({ value: a.id, label: `${a.code} - ${a.name}` }))}
+                    placeholder="Select funding account..."
+                    className="w-full h-9"
+                  />
                 </div>
               </div>
 

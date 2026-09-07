@@ -274,7 +274,7 @@ export function calculateEmployeePayrollDetails(emp: Employee, frequency: string
 }
 
 export default function PayrollProcessing() {
-  const { employees, departments, positions, fetchPayruns, fetchEmployees, fetchDepartments, fetchPositions, postPayrun } = usePayrollStore();
+  const { employees, departments, positions, fetchPayruns, fetchEmployees, fetchDepartments, fetchPositions, postPayrun, calculatePayrun } = usePayrollStore();
 
   const [step, setStep] = useState<'create' | 'preview' | 'slips'>('create');
   const [loading, setLoading] = useState(false);
@@ -375,6 +375,27 @@ export default function PayrollProcessing() {
     setLoading(true);
     try {
       setStep('preview');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSavePayrunForSigning = async () => {
+    if (!window.confirm('Save this payrun for HR sign-off?\n\nThis will calculate the payroll and save it as "Calculated (Pending GL Posting)" WITHOUT posting any entry to the General Ledger.\n\nOnce management signs the generated sheet, the Accounts Department will post it to GL.')) return;
+    setLoading(true);
+    try {
+      await calculatePayrun({
+        frequency: form.frequency,
+        periodStart: form.periodStart,
+        periodEnd: form.periodEnd,
+        payDate: form.payDate,
+        employeeIds: targetEmployees.map(e => e.id),
+      });
+      alert('✓ Payroll run saved successfully as "Calculated (Pending GL Posting)".\n\nNo general ledger journal entries were posted.\n\nThe official sign-off sheet will now be printed for signatures.');
+      await fetchPayruns();
+      handlePrint();
+    } catch (err: any) {
+      alert(err.message || 'Error calculating payroll run');
     } finally {
       setLoading(false);
     }
@@ -627,20 +648,40 @@ export default function PayrollProcessing() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Button variant="outline" size="sm" onClick={() => setStep('create')}>
                 <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Back to Edit
               </Button>
-              <Button variant="outline" size="sm" onClick={handlePrint}>
-                <Printer className="w-3.5 h-3.5 mr-1" /> Print Certificate
+              <Button variant="outline" size="sm" onClick={handlePrint} className="text-blue-700 border-blue-300 hover:bg-blue-50">
+                <Printer className="w-3.5 h-3.5 mr-1" /> Print Sign-off Sheet
               </Button>
               <Button variant="outline" size="sm" onClick={handleExportCSV} className="text-emerald-700 border-emerald-300 hover:bg-emerald-50">
                 <Download className="w-3.5 h-3.5 mr-1" /> Download Excel/CSV
               </Button>
-              <Button onClick={handleAuthorizeAndPost} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 text-white font-black shadow-sm">
-                <CheckCircle2 className="w-4 h-4 mr-1.5" /> Authorize & Post Payrun to GL
+              <Button onClick={handleSavePayrunForSigning} disabled={loading} className="bg-amber-600 hover:bg-amber-700 text-white font-bold shadow-sm">
+                <FileText className="w-4 h-4 mr-1.5" /> Save & Print Sign-off Sheet (HR)
+              </Button>
+              <Button onClick={handleAuthorizeAndPost} disabled={loading} variant="outline" className="text-emerald-700 border-emerald-600 hover:bg-emerald-50 font-bold">
+                <CheckCircle2 className="w-4 h-4 mr-1.5 text-emerald-600" /> Post Directly to GL (Accounts)
               </Button>
             </div>
+          </div>
+
+          {/* Segregation of Duties Guidance Banner */}
+          <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-xs flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 flex items-center justify-center font-bold text-base shrink-0">ⓘ</span>
+              <div>
+                <p className="font-bold text-amber-900 dark:text-amber-200">Segregation of Duties (SoD) - Internal Accounting Control</p>
+                <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
+                  <strong>HR Department:</strong> Click <em>"Save & Print Sign-off Sheet"</em> to record the calculated payrun without posting to the General Ledger. Obtain required signatures and send to Accounts.<br/>
+                  <strong>Accounts Department:</strong> Reviews the signed physical/digital sheet and posts the balanced liability voucher to the General Ledger.
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono uppercase bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2.5 py-1 rounded-md font-bold whitespace-nowrap">
+              Pending GL Posting
+            </span>
           </div>
 
           {/* Executive Summary Cards */}
@@ -878,23 +919,41 @@ export default function PayrollProcessing() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 pt-4">
-              <div className="space-y-4">
-                <span className="text-xs font-bold text-muted-foreground uppercase block">Prepared By (HR & Payroll Officer)</span>
-                <div className="h-12 border-b-2 border-dashed border-border" />
-                <div className="text-xs font-bold text-foreground">Signature & Date</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 pt-4">
+              <div className="space-y-3 p-3.5 rounded-xl border border-border bg-muted/20">
+                <span className="text-[11px] font-bold text-muted-foreground uppercase block">1. Prepared By (HR Officer)</span>
+                <div className="h-10 border-b-2 border-dashed border-border" />
+                <div className="text-[11px] text-foreground flex justify-between">
+                  <span>Sign: _________</span>
+                  <span>Date: ________</span>
+                </div>
               </div>
 
-              <div className="space-y-4">
-                <span className="text-xs font-bold text-muted-foreground uppercase block">Reviewed By (Chief Financial Officer)</span>
-                <div className="h-12 border-b-2 border-dashed border-border" />
-                <div className="text-xs font-bold text-foreground">Signature & Date</div>
+              <div className="space-y-3 p-3.5 rounded-xl border border-border bg-muted/20">
+                <span className="text-[11px] font-bold text-muted-foreground uppercase block">2. Verified By (Internal Auditor)</span>
+                <div className="h-10 border-b-2 border-dashed border-border" />
+                <div className="text-[11px] text-foreground flex justify-between">
+                  <span>Sign: _________</span>
+                  <span>Date: ________</span>
+                </div>
               </div>
 
-              <div className="space-y-4">
-                <span className="text-xs font-bold text-muted-foreground uppercase block">Authorized By (Managing Director / Board)</span>
-                <div className="h-12 border-b-2 border-dashed border-border" />
-                <div className="text-xs font-bold text-foreground">Signature & Date</div>
+              <div className="space-y-3 p-3.5 rounded-xl border border-border bg-muted/20">
+                <span className="text-[11px] font-bold text-muted-foreground uppercase block">3. Authorized By (CEO / Director)</span>
+                <div className="h-10 border-b-2 border-dashed border-border" />
+                <div className="text-[11px] text-foreground flex justify-between">
+                  <span>Sign: _________</span>
+                  <span>Date: ________</span>
+                </div>
+              </div>
+
+              <div className="space-y-3 p-3.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5">
+                <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase block">4. Passed to GL (Finance Mgr)</span>
+                <div className="h-10 border-b-2 border-dashed border-emerald-500/40" />
+                <div className="text-[11px] text-foreground flex justify-between">
+                  <span>Sign: _________</span>
+                  <span>Date: ________</span>
+                </div>
               </div>
             </div>
           </div>

@@ -4,13 +4,14 @@ export function useFormDraft<T>(
   key: string,
   form: T,
   setForm: (form: T) => void,
-  isOpen: boolean
+  isOpen: boolean,
+  isEditing?: boolean
 ) {
   const [hasDraft, setHasDraft] = useState(false);
 
-  // Check if draft exists on mount/open
+  // Check if draft exists on mount/open ONLY WHEN NOT EDITING an existing record!
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !isEditing) {
       const saved = localStorage.getItem(`draft_${key}`);
       setHasDraft(!!saved);
       if (saved) {
@@ -25,7 +26,7 @@ export function useFormDraft<T>(
         }
       }
     }
-  }, [isOpen, key]);
+  }, [isOpen, isEditing, key]);
 
   const saveDraft = () => {
     localStorage.setItem(`draft_${key}`, JSON.stringify(form));

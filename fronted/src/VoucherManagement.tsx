@@ -204,19 +204,30 @@ export const VoucherManagement: React.FC<VoucherManagementProps> = ({ activeEnti
   };
 
   const filteredVouchers = useMemo(() => {
-    return vouchers.filter((v) => {
-      if (typeFilter !== 'All' && v.voucherType !== typeFilter) return false;
-      if (query.trim()) {
-        const lower = query.toLowerCase();
-        const matchesNum = v.voucherNumber.toLowerCase().includes(lower);
-        const matchesParty = v.partyName.toLowerCase().includes(lower);
-        const matchesAcc = v.accountName.toLowerCase().includes(lower);
-        const matchesNarr = v.narration.toLowerCase().includes(lower);
-        const matchesChq = (v.chequeNumber || '').toLowerCase().includes(lower);
-        if (!matchesNum && !matchesParty && !matchesAcc && !matchesNarr && !matchesChq) return false;
-      }
-      return true;
-    });
+    return vouchers
+      .filter((v) => {
+        if (typeFilter !== 'All' && v.voucherType !== typeFilter) return false;
+        if (query.trim()) {
+          const lower = query.toLowerCase();
+          const matchesNum = v.voucherNumber.toLowerCase().includes(lower);
+          const matchesParty = v.partyName.toLowerCase().includes(lower);
+          const matchesAcc = v.accountName.toLowerCase().includes(lower);
+          const matchesNarr = v.narration.toLowerCase().includes(lower);
+          const matchesChq = (v.chequeNumber || '').toLowerCase().includes(lower);
+          if (!matchesNum && !matchesParty && !matchesAcc && !matchesNarr && !matchesChq) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const dateA = a.date || '';
+        const dateB = b.date || '';
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA);
+        }
+        const numA = a.voucherNumber || '';
+        const numB = b.voucherNumber || '';
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' });
+      });
   }, [vouchers, typeFilter, query]);
 
   // 4 Top Financial KPIs

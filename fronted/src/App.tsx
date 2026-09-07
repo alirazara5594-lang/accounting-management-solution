@@ -19,6 +19,7 @@ import { ProcurementWorkspace } from './ProcurementWorkspace'
 import { VendorBills } from './VendorBills'
 import { FixedAssets } from './FixedAssets'
 import { AssetsInventoryWorkspace } from './AssetsInventoryWorkspace'
+import { InventoryWorkspace } from './InventoryWorkspace'
 import DepreciationRun from './DepreciationRun'
 import DepreciationSchedule from './DepreciationSchedule'
 import ValuationReport from './ValuationReport'
@@ -111,7 +112,15 @@ const blank = { code: '', name: '', type: 'Asset' as AccountType, parentId: '', 
 
 export default function App() {
   const [page, setPage] = useState<string>(() => {
-    return localStorage.getItem('last_active_page') || 'Overview.Dashboard';
+    try {
+      if (typeof window !== 'undefined' && window.location.hash) {
+        const hash = decodeURIComponent(window.location.hash.replace(/^#/, ''));
+        if (hash) return hash;
+      }
+      const saved = localStorage.getItem('last_active_page');
+      if (saved) return saved;
+    } catch {}
+    return 'Overview.Dashboard';
   });
   const [theme, setTheme] = useState<string>(getStoredTheme);
   const [settingsView, setSettingsView] = useState<'home' | 'entities' | 'mappings'>('home')
@@ -135,6 +144,17 @@ export default function App() {
   const [licenseModalOpen, setLicenseModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
+
+  // Global Navigation Event Listener for seamless inter-module workflow transitions
+  useEffect(() => {
+    const handleNav = (e: any) => {
+      if (e?.detail && typeof e.detail === 'string') {
+        setPage(e.detail);
+      }
+    };
+    window.addEventListener('ams_navigate', handleNav);
+    return () => window.removeEventListener('ams_navigate', handleNav);
+  }, []);
 
   // Global Keyboard Shortcuts Listener
   useEffect(() => {
@@ -214,10 +234,18 @@ export default function App() {
   };
 
   const handleLogin = async (userData: UserData) => {
+    const emailNorm = userData.email.toLowerCase().trim();
+
+    // Reset Sarah Jenkins onboarding so she always triggers Setup Configuration
+    if (emailNorm === 'accountant@acme.com') {
+      localStorage.removeItem('onboarding_complete_accountant@acme.com');
+      localStorage.removeItem('erp_enabled_modules_accountant@acme.com');
+    }
+
     const user: UserData = {
       email: userData.email,
       fullName: userData.fullName,
-      role: userData.role || (userData.email === 'admin@acme.com' ? 'Finance admin' : 'Senior Accountant'),
+      role: userData.role || (emailNorm === 'admin@acme.com' ? 'Finance admin' : 'Senior Accountant'),
       avatar: userData.avatar || 'MA',
       provider: userData.provider || 'email',
     };
@@ -244,16 +272,42 @@ export default function App() {
   const handleLogout = () => {
     authApi.logout();
     localStorage.removeItem('ab_demo_mode');
+    localStorage.removeItem('auth_user');
+    localStorage.removeItem('auth_token');
     setCurrentUser(null);
     notify('Logged out successfully');
   };
 
   useEffect(() => {
-    localStorage.setItem('last_active_page', page);
+    try {
+      localStorage.setItem('last_active_page', page);
+      const currentHash = window.location.hash ? decodeURIComponent(window.location.hash.replace(/^#/, '')) : '';
+      if (currentHash !== page) {
+        window.history.replaceState(null, '', '#' + encodeURIComponent(page));
+      }
+    } catch {}
+  }, [page]);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      try {
+        const hash = window.location.hash ? decodeURIComponent(window.location.hash.replace(/^#/, '')) : '';
+        if (hash && hash !== page) {
+          setPage(hash);
+        }
+      } catch {}
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
   }, [page]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    if (theme.endsWith('-dark') || theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
     localStorage.setItem('ams_theme', theme);
   }, [theme]);
 
@@ -288,19 +342,41 @@ export default function App() {
     }
   }, [currentUser, entities, page])
   const openCreate = async () => { setEditing(null); setForm(blank); setModal(true) }
-  const openEdit = (a: Account) => { setEditing(a); setForm({ code: a.code, name: a.name, type: a.type as AccountType, parentId: a.parentId || '', openingBalance: String(a.openingBalance), reconciliationEnabled: a.reconciliationEnabled, ifrsTag: a.ifrsTag || '', gaapTag: a.gaapTag || '', isSystem: a.isSystem, subtype: a.subtype || '', currency: a.currency || 'USD', taxCategory: a.taxCategory || '', allowManualJournal: a.allowManualJournal !== false, description: a.description || '', status: a.status || 'Active' }); setModal(true) }
+  const openEdit = (a: Account) => { 
+    setEditing(a); 
+    const effectiveSubtype = a.subtype || inferSubtype(a.code, a.type);
+    setForm({ 
+      code: a.code, 
+      name: a.name, 
+      type: a.type as AccountType, 
+      parentId: a.parentId || '', 
+      openingBalance: String(a.openingBalance || 0), 
+      reconciliationEnabled: a.reconciliationEnabled, 
+      ifrsTag: a.ifrsTag || '', 
+      gaapTag: a.gaapTag || '', 
+      isSystem: a.isSystem, 
+      subtype: effectiveSubtype, 
+      currency: a.currency || 'USD', 
+      taxCategory: a.taxCategory || '', 
+      allowManualJournal: a.allowManualJournal !== false, 
+      description: a.description || '', 
+      status: a.status || 'Active' 
+    }); 
+    setModal(true); 
+  }
 
   const saveAccount = async (e: FormEvent) => {
     e.preventDefault();
+    const effectiveSubtype = form.subtype || inferSubtype(form.code, form.type) || "";
     const body = { 
       ...form, 
       parentId: form.parentId || null, 
-      openingBalance: Number(form.openingBalance), 
+      openingBalance: Number(form.openingBalance) || 0, 
       openingBalanceDate: Number(form.openingBalance) ? new Date().toISOString().slice(0, 10) : null, 
       gaapTag: form.gaapTag || null, 
       customFields: {}, 
       isSystem: form.isSystem,
-      subtype: form.subtype || "",
+      subtype: effectiveSubtype,
       currency: form.currency || 'USD',
       taxCategory: form.taxCategory || null,
       allowManualJournal: form.allowManualJournal,
@@ -309,8 +385,9 @@ export default function App() {
     };
     try {
       await saveAccountStore(body, editing ? editing.id : undefined);
+      await fetchAccounts();
       setModal(false);
-      notify(editing ? 'Account updated' : 'Account created');
+      notify(editing ? '✓ Account updated successfully' : '✓ Account created successfully');
     } catch (err: any) {
       notify(err.message || 'Could not save account');
     }
@@ -377,7 +454,8 @@ export default function App() {
     'Accounting.Lease Accounting': 'lease-accounting',
     'Accounting.Intercompany Allocations': 'intercompany',
     'Assets & Inventory.Summary': 'assets-inventory-summary',
-    'Assets & Inventory.Assets & Inventory Workspace': 'assets-inventory',
+    'Assets & Inventory.Asset Register': 'assets-inventory',
+    'Assets & Inventory.Inventory': 'assets-inventory-inventory',
     'Assets & Inventory.Depreciation Run': 'depreciation-run',
     'Assets & Inventory.Depreciation Schedule': 'depreciation-schedule',
     'Assets & Inventory.Valuation Reports': 'valuation-report',
@@ -455,15 +533,51 @@ export default function App() {
   const activeGroupItems = activeGroup?.items || []
 
   const enabledModules = useMemo(() => {
+    const email = currentUser?.email?.toLowerCase() || '';
+
+    // Check user-specific configuration saved during Setup Configuration
+    if (email) {
+      try {
+        const userSaved = localStorage.getItem(`erp_enabled_modules_${email}`);
+        if (userSaved) {
+          const parsed = JSON.parse(userSaved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch {}
+    }
+
     if (activeEntity?.modules && activeEntity.modules.length > 0) {
       return activeEntity.modules;
     }
-    try {
-      const saved = localStorage.getItem('erp_enabled_modules');
-      if (saved) return JSON.parse(saved);
-    } catch {}
+
+    // Default for Finance Admin if no custom setup is saved
+    if (email === 'admin@acme.com' || currentUser?.role?.toLowerCase().includes('admin')) {
+      return []; // All 13 modules
+    }
+
     return [];
-  }, [activeEntity]);
+  }, [activeEntity, currentUser]);
+
+  const accessibleEntities = useMemo(() => {
+    if (!currentUser) return entities;
+    const email = currentUser.email.toLowerCase();
+    const role = currentUser.role?.toLowerCase() || '';
+
+    // Finance Admin / Super Admin sees all entities
+    if (email === 'admin@acme.com' || role.includes('admin')) {
+      return entities;
+    }
+
+    // Check if user has an assigned company ID
+    const assignedCompanyId = (currentUser as any)?.companyId;
+    if (assignedCompanyId) {
+      const matched = entities.filter(e => e.id === assignedCompanyId);
+      if (matched.length > 0) return matched;
+    }
+    return entities;
+  }, [entities, currentUser]);
 
   if (!currentUser) {
     return <Login onLogin={handleLogin} />;
@@ -486,7 +600,7 @@ export default function App() {
       <div className="main-col">
         <TopHeader
           currentUser={currentUser}
-          entities={entities}
+          entities={accessibleEntities}
           activeEntityId={activeEntityId}
           onSelectEntity={setActiveEntityId}
           page={page}
@@ -517,23 +631,13 @@ export default function App() {
               <label className="entity-picker">
                 Working in
                 <select value={activeEntityId} onChange={e => setActiveEntityId(e.target.value)}>
-                  {entities.map(x => (
+                  {accessibleEntities.map(x => (
                     <option key={x.id} value={x.id}>
                       {x.name}{x.code ? ` · ${x.code}` : ''}
                     </option>
                   ))}
                 </select>
               </label>
-              {activeView === 'journal' && (
-                <button
-                  className="primary"
-                  onClick={() => document.getElementById('journal-form')?.scrollIntoView({ behavior: 'smooth' })}
-                  disabled={readOnly}
-                  style={readOnly ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
-                >
-                  ＋ New entry
-                </button>
-              )}
             </div>
           </header>
         </div>
@@ -583,8 +687,8 @@ export default function App() {
   {activeView === 'vendors' && <VendorManagement entities={entities as any} activeEntityId={activeEntityId} notify={notify} />}
   {activeView === 'sales-workspace' && <SalesWorkspace activeEntityId={activeEntityId} entities={entities as any} />}
   {activeView === 'estimates-quotes' && <EstimatesAndQuotes activeEntityId={activeEntityId} entities={entities as any} />}
-  {activeView === 'sales-orders' && <SalesOrdersWorkspace activeEntityId={activeEntityId} />}
-  {activeView === 'credit-notes' && <CreditNotesWorkspace />}
+  {activeView === 'sales-orders' && <SalesOrdersWorkspace activeEntityId={activeEntityId} entities={entities as any} />}
+  {activeView === 'credit-notes' && <CreditNotesWorkspace activeEntityId={activeEntityId} entities={entities as any} />}
   {activeView === 'deferred-revenue' && <CustomerDeferredRevenueView activeEntityId={activeEntityId} accounts={accounts} />}
   {activeView === 'procurement-workspace' && <ProcurementWorkspace activeEntityId={activeEntityId} entities={entities as any} />}
   {activeView === 'vendor-payments' && <VendorPaymentsView activeEntityId={activeEntityId} entities={entities as any} />}
@@ -650,6 +754,8 @@ export default function App() {
   {activeView === 'taxes' && <TaxAccountingView activeEntityId={activeEntityId} entities={entities as any} />}
   {activeView === 'fixed-assets' && <FixedAssets activeEntityId={activeEntityId} />}
   {activeView === 'assets-inventory' && <AssetsInventoryWorkspace activeEntityId={activeEntityId} entities={entities} />}
+  {activeView === 'assets-inventory-inventory' && <InventoryWorkspace activeEntityId={activeEntityId} />}
+  {activeView === 'inventory' && <InventoryWorkspace activeEntityId={activeEntityId} />}
   {activeView === 'depreciation-run' && <DepreciationRun activeEntityId={activeEntityId} />}
   {activeView === 'depreciation-schedule' && <DepreciationSchedule activeEntityId={activeEntityId} />}
   {activeView === 'valuation-report' && <ValuationReport activeEntityId={activeEntityId} />}
@@ -668,7 +774,7 @@ export default function App() {
   {activeView === 'period-closing' && <PeriodClosingView activeEntityId={activeEntityId} entities={entities as any} />}
   {activeView === 'audit-trail' && <AuditTrailView activeEntityId={activeEntityId} entities={entities as any} />}
   {activeView === 'lease-accounting' && <LeaseAccounting activeEntityId={activeEntityId} />}
-  {activeView === 'customer-payments' && <CustomerPaymentsWorkspace />}
+  {activeView === 'customer-payments' && <CustomerPaymentsWorkspace activeEntityId={activeEntityId} entities={entities as any} />}
   {activeView === 'customer-statements' && <CustomerStatementsWorkspace activeEntityId={activeEntityId} />}
   {activeView === 'customer-aging' && <CustomerAgingWorkspace activeEntityId={activeEntityId} />}
   {activeView === 'sales-reports' && <SalesReportsWorkspace activeEntityId={activeEntityId} />}
@@ -687,34 +793,55 @@ export default function App() {
 
 const subtypesMap: Record<string, string[]> = {
   Asset: ['Current Assets', 'Non-Current Assets'],
-  ContraAsset: ['Non-Current Assets'],
+  ContraAsset: ['Current Assets', 'Non-Current Assets'],
   Liability: ['Current Liabilities', 'Non-Current Liabilities'],
-  ContraLiability: ['Current Liabilities'],
+  ContraLiability: ['Current Liabilities', 'Non-Current Liabilities'],
   Equity: ['Share Capital & Premium', 'Retained Earnings & Reserves'],
   ContraEquity: ['Share Capital & Premium', 'Retained Earnings & Reserves'],
   Revenue: ['Operating Revenue', 'Non-Operating Revenue'],
-  ContraRevenue: ['Operating Revenue'],
-  Expense: ['Cost of Goods Sold', 'Operating Expenses', 'Non-Operating Expenses'],
-  ContraExpense: ['Operating Expenses']
+  ContraRevenue: ['Operating Revenue', 'Non-Operating Revenue'],
+  Expense: ['Operating Expenses', 'Cost of Goods Sold', 'Non-Operating Expenses'],
+  ContraExpense: ['Cost of Goods Sold', 'Operating Expenses']
 };
 
 const inferSubtype = (code: string, type: string): string => {
+  if (!code) return '';
+  const num = parseInt(code, 10);
+  
   if (type === 'Asset' || type === 'ContraAsset') {
-    return code.startsWith('11') ? 'Current Assets' : 'Non-Current Assets';
+    if (!isNaN(num)) {
+      if (num >= 10000 && num < 15000) return 'Current Assets';
+      if (num >= 15000) return 'Non-Current Assets';
+    }
+    return code.startsWith('11') || code.startsWith('12') || code.startsWith('13') || code.startsWith('14')
+      ? 'Current Assets' : 'Non-Current Assets';
   }
+  
   if (type === 'Liability' || type === 'ContraLiability') {
-    return code.startsWith('25') ? 'Non-Current Liabilities' : 'Current Liabilities';
+    if (!isNaN(num)) {
+      if (num >= 20000 && num < 25000) return 'Current Liabilities';
+      if (num >= 25000) return 'Non-Current Liabilities';
+    }
+    return code.startsWith('25') || code.startsWith('26') || code.startsWith('27') || code.startsWith('28')
+      ? 'Non-Current Liabilities' : 'Current Liabilities';
   }
+  
   if (type === 'Equity' || type === 'ContraEquity') {
-    return code.startsWith('32') ? 'Retained Earnings & Reserves' : 'Share Capital & Premium';
+    if (!isNaN(num) && num >= 30000 && num < 32000) return 'Share Capital & Premium';
+    return 'Retained Earnings & Reserves';
   }
+  
   if (type === 'Revenue' || type === 'ContraRevenue') {
-    return code.startsWith('42') ? 'Non-Operating Revenue' : 'Operating Revenue';
+    if (!isNaN(num) && num >= 40000 && num < 42000) return 'Operating Revenue';
+    return 'Non-Operating Revenue';
   }
+  
   if (type === 'Expense' || type === 'ContraExpense') {
-    if (code.startsWith('5')) return 'Cost of Goods Sold';
-    return code.startsWith('61') ? 'Operating Expenses' : 'Non-Operating Expenses';
+    if (!isNaN(num) && num >= 50000 && num < 60000) return 'Cost of Goods Sold';
+    if (!isNaN(num) && num >= 60000 && num < 62000) return 'Operating Expenses';
+    return 'Non-Operating Expenses';
   }
+  
   return '';
 };
 
@@ -722,8 +849,9 @@ function AccountModal({ form, setForm, accounts, editing, close, save }: { form:
   const field = (key: string, value: any) => setForm((f: any) => ({ ...f, [key]: value }));
 
   const [subtype, setSubtype] = useState(() => {
+    if (form.subtype) return form.subtype;
     if (editing) {
-      return inferSubtype(editing.code, editing.type);
+      return editing.subtype || inferSubtype(editing.code, editing.type);
     }
     const initialType = form.type || 'Asset';
     return subtypesMap[initialType]?.[0] || '';
@@ -776,28 +904,28 @@ function AccountModal({ form, setForm, accounts, editing, close, save }: { form:
     setSubtype(newSubtype);
     field('subtype', newSubtype);
     
-    // Suggest standard parent account based on selected subtype
-    let suggestedParentCode = '';
-    switch (newSubtype) {
-      case 'Current Assets': suggestedParentCode = '11000'; break;
-      case 'Non-Current Assets': suggestedParentCode = '15000'; break;
-      case 'Current Liabilities': suggestedParentCode = '21000'; break;
-      case 'Non-Current Liabilities': suggestedParentCode = '25000'; break;
-      case 'Share Capital & Premium': suggestedParentCode = '31000'; break;
-      case 'Retained Earnings & Reserves': suggestedParentCode = '32000'; break;
-      case 'Operating Revenue': suggestedParentCode = '41000'; break;
-      case 'Non-Operating Revenue': suggestedParentCode = '42000'; break;
-      case 'Cost of Goods Sold': suggestedParentCode = '50000'; break;
-      case 'Operating Expenses': suggestedParentCode = '61000'; break;
-      case 'Non-Operating Expenses': suggestedParentCode = '60000'; break;
-    }
-    
-    const suggestedParent = accounts.find(a => a.code === suggestedParentCode);
-    const parentId = suggestedParent ? suggestedParent.id : '';
-    setForm((f: any) => ({ ...f, parentId }));
-    
-    if (!editing) {
-      fetchNextCode(form.type, parentId);
+    // Only auto-suggest standard parent code for brand new accounts if parent is not selected yet
+    if (!editing && !form.parentId) {
+      let suggestedParentCode = '';
+      switch (newSubtype) {
+        case 'Current Assets': suggestedParentCode = '11000'; break;
+        case 'Non-Current Assets': suggestedParentCode = '15000'; break;
+        case 'Current Liabilities': suggestedParentCode = '21000'; break;
+        case 'Non-Current Liabilities': suggestedParentCode = '25000'; break;
+        case 'Share Capital & Premium': suggestedParentCode = '31000'; break;
+        case 'Retained Earnings & Reserves': suggestedParentCode = '32000'; break;
+        case 'Operating Revenue': suggestedParentCode = '41000'; break;
+        case 'Non-Operating Revenue': suggestedParentCode = '42000'; break;
+        case 'Cost of Goods Sold': suggestedParentCode = '50000'; break;
+        case 'Operating Expenses': suggestedParentCode = '61000'; break;
+        case 'Non-Operating Expenses': suggestedParentCode = '60000'; break;
+      }
+      
+      const suggestedParent = accounts.find(a => a.code === suggestedParentCode);
+      if (suggestedParent) {
+        setForm((f: any) => ({ ...f, parentId: suggestedParent.id }));
+        fetchNextCode(form.type, suggestedParent.id);
+      }
     }
   };
 
@@ -808,62 +936,36 @@ function AccountModal({ form, setForm, accounts, editing, close, save }: { form:
     setSubtype(firstSubtype);
     field('subtype', firstSubtype);
 
-    // Auto-select standard parent based on subtype
-    let suggestedParentCode = '';
-    switch (firstSubtype) {
-      case 'Current Assets': suggestedParentCode = '11000'; break;
-      case 'Non-Current Assets': suggestedParentCode = '15000'; break;
-      case 'Current Liabilities': suggestedParentCode = '21000'; break;
-      case 'Non-Current Liabilities': suggestedParentCode = '25000'; break;
-      case 'Share Capital & Premium': suggestedParentCode = '31000'; break;
-      case 'Retained Earnings & Reserves': suggestedParentCode = '32000'; break;
-      case 'Operating Revenue': suggestedParentCode = '41000'; break;
-      case 'Non-Operating Revenue': suggestedParentCode = '42000'; break;
-      case 'Cost of Goods Sold': suggestedParentCode = '50000'; break;
-      case 'Operating Expenses': suggestedParentCode = '61000'; break;
-      case 'Non-Operating Expenses': suggestedParentCode = '60000'; break;
-    }
-    const suggestedParent = accounts.find(a => a.code === suggestedParentCode);
-    const parentId = suggestedParent ? suggestedParent.id : '';
-    setForm((f: any) => ({ ...f, parentId }));
-
     if (!editing) {
+      let suggestedParentCode = '';
+      switch (firstSubtype) {
+        case 'Current Assets': suggestedParentCode = '11000'; break;
+        case 'Non-Current Assets': suggestedParentCode = '15000'; break;
+        case 'Current Liabilities': suggestedParentCode = '21000'; break;
+        case 'Non-Current Liabilities': suggestedParentCode = '25000'; break;
+        case 'Share Capital & Premium': suggestedParentCode = '31000'; break;
+        case 'Retained Earnings & Reserves': suggestedParentCode = '32000'; break;
+        case 'Operating Revenue': suggestedParentCode = '41000'; break;
+        case 'Non-Operating Revenue': suggestedParentCode = '42000'; break;
+        case 'Cost of Goods Sold': suggestedParentCode = '50000'; break;
+        case 'Operating Expenses': suggestedParentCode = '61000'; break;
+        case 'Non-Operating Expenses': suggestedParentCode = '60000'; break;
+      }
+      const suggestedParent = accounts.find(a => a.code === suggestedParentCode);
+      const parentId = suggestedParent ? suggestedParent.id : '';
+      setForm((f: any) => ({ ...f, parentId }));
       fetchNextCode(val, parentId);
     }
   };
 
   const filteredParents = useMemo(() => {
-    if (!subtype) return accounts.filter(a => a.id !== editing?.id);
+    const baseType = form.type?.replace('Contra', '');
     return accounts.filter(a => {
       if (a.id === editing?.id) return false;
-      switch (subtype) {
-        case 'Current Assets':
-          return a.code.startsWith('11') || a.code === '10000';
-        case 'Non-Current Assets':
-          return a.code.startsWith('15') || a.code === '10000';
-        case 'Current Liabilities':
-          return a.code.startsWith('21') || a.code.startsWith('22') || a.code === '20000';
-        case 'Non-Current Liabilities':
-          return a.code.startsWith('25') || a.code === '20000';
-        case 'Share Capital & Premium':
-          return a.code === '30000' || a.code.startsWith('31');
-        case 'Retained Earnings & Reserves':
-          return a.code === '30000' || a.code.startsWith('32');
-        case 'Operating Revenue':
-          return a.code === '40000' || a.code.startsWith('41');
-        case 'Non-Operating Revenue':
-          return a.code === '40000' || a.code.startsWith('42');
-        case 'Cost of Goods Sold':
-          return a.code === '50000' || a.code.startsWith('5');
-        case 'Operating Expenses':
-          return a.code === '60000' || a.code.startsWith('61');
-        case 'Non-Operating Expenses':
-          return a.code === '60000';
-        default:
-          return true;
-      }
-    });
-  }, [accounts, subtype, editing]);
+      const aBaseType = a.type?.replace('Contra', '');
+      return aBaseType === baseType;
+    }).sort((a, b) => a.code.localeCompare(b.code));
+  }, [accounts, form.type, editing]);
 
   const calculatedLevel = useMemo(() => {
     if (!form.parentId) return 'Main Head';

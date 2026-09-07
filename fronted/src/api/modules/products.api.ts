@@ -48,4 +48,11 @@ export const productsApi = {
       method: 'DELETE',
     });
   },
+
+  setProductPurpose: async (id: string, purpose: string): Promise<Product> => {
+    return apiClient<Product>(`/products/${id}/purpose`, {
+      method: 'PATCH',
+      body: { purpose },
+    });
+  },
 };

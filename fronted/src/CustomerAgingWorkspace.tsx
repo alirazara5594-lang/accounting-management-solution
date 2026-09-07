@@ -9,6 +9,7 @@ import {
 import { downloadExcel } from './lib/exportUtils';
 import ExportDropdown from './components/ExportDropdown';
 import { money, moneyCompact } from './lib/currency';
+import { formatInvoiceNumber } from './lib/invoiceNumbering';
 import { KpiCard, KpiGrid } from './components/ui/kpi-card';
 import { StatusChip } from './components/ui/status-chip';
 import { EmptyState, TableSkeleton } from './components/ui/empty-state';
@@ -102,9 +103,16 @@ export function CustomerAgingWorkspace({ activeEntityId }: Props) {
       worstBucket: AgingBucket;
     }> = {};
 
-    // Filter open/unpaid invoices
+    // Filter open/unpaid posted invoices (exclude Draft 0 and Void 3)
     const openInvoices = invoices.filter(
-      (i: any) => i.status !== 2 && i.status !== 3 && String(i.status).toLowerCase() !== 'void' && (i.amountDue || 0) > 0
+      (i: any) =>
+        i.status !== 0 &&
+        i.status !== '0' &&
+        String(i.status).toLowerCase() !== 'draft' &&
+        i.status !== 2 &&
+        i.status !== 3 &&
+        String(i.status).toLowerCase() !== 'void' &&
+        (i.amountDue || 0) > 0
     );
 
     openInvoices.forEach((inv: any) => {
@@ -209,6 +217,9 @@ export function CustomerAgingWorkspace({ activeEntityId }: Props) {
     const open = invoices.filter(
       (i: any) =>
         i.customerId === selectedCustomerId &&
+        i.status !== 0 &&
+        i.status !== '0' &&
+        String(i.status).toLowerCase() !== 'draft' &&
         i.status !== 2 &&
         i.status !== 3 &&
         String(i.status).toLowerCase() !== 'void' &&
@@ -241,6 +252,9 @@ export function CustomerAgingWorkspace({ activeEntityId }: Props) {
     const custInvs = invoices.filter(
       (i: any) =>
         i.customerId === c.customerId &&
+        i.status !== 0 &&
+        i.status !== '0' &&
+        String(i.status).toLowerCase() !== 'draft' &&
         i.status !== 2 &&
         i.status !== 3 &&
         String(i.status).toLowerCase() !== 'void' &&
@@ -318,13 +332,14 @@ export function CustomerAgingWorkspace({ activeEntityId }: Props) {
 
     // Invoices breakdown
     const invHeaders = ['Invoice #', 'Date', 'Due Date', 'Days Overdue', 'Aging Bucket', 'Total Amount', 'Paid', 'Amount Due'];
-    const invRows = custInvs.map((i: any) => {
+    const invRows = custInvs.map((i: any, idx: number) => {
       const b = calculateAgingBucket(i.dueDate || i.invoiceDate, asOfDate);
       const days = calculateDaysPastDue(i.dueDate || i.invoiceDate, asOfDate);
       const amountDue = i.amountDue || (i.totalAmount - (i.paidAmount || 0)) || 0;
+      const cleanInvNum = formatInvoiceNumber(i.invoiceNumber || i.reference, idx + 1);
 
       return [
-        i.invoiceNumber || '-',
+        cleanInvNum,
         (i.invoiceDate || i.date || '').slice(0, 10),
         (i.dueDate || '').slice(0, 10) || '-',
         days > 0 ? `${days} d` : '0 d',

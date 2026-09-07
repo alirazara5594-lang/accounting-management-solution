@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   ChevronRight, Globe, Key, CheckCircle2, ArrowLeft,
   Briefcase, ShoppingCart, Factory, ShoppingBag,
-  Landmark, BookOpen, Boxes, Users, MapPin, Scale, Sparkles, Building2
+  Landmark, BookOpen, Boxes, Users, MapPin, Scale, Sparkles, Building2, ShieldCheck
 } from 'lucide-react'
 import type { UserData } from '../Login'
 import { setActiveCurrency } from '../lib/currency'
 import { setLicenseMode as syncLicenseMode, activateLicenseKey, type LicenseModeId } from '../licenseManager'
+import { GLOBAL_TAX_STRUCTURES, type RegionTaxConfig, type TaxCodeOption } from '../lib/taxLocalization'
 
 const LICENSE_MODES = [
   {
@@ -36,12 +37,12 @@ const LICENSE_MODES = [
 ]
 
 const COUNTRIES = [
-  { code: 'PK', name: 'Pakistan', currency: 'PKR', flag: '🇵🇰', tax: 'FBR GST 18%' },
+  { code: 'PK', name: 'Pakistan', currency: 'PKR', flag: '🇵🇰', tax: 'FBR GST & Provincial' },
   { code: 'US', name: 'United States', currency: 'USD', flag: '🇺🇸', tax: 'State Sales Tax' },
   { code: 'GB', name: 'United Kingdom', currency: 'GBP', flag: '🇬🇧', tax: 'HMRC Standard VAT 20%' },
   { code: 'AE', name: 'United Arab Emirates', currency: 'AED', flag: '🇦🇪', tax: 'FTA Standard VAT 5%' },
   { code: 'SA', name: 'Saudi Arabia', currency: 'SAR', flag: '🇸🇦', tax: 'ZATCA VAT 15%' },
-  { code: 'CA', name: 'Canada', currency: 'CAD', flag: '🇨🇦', tax: 'CRA GST/HST 13%' },
+  { code: 'CA', name: 'Canada', currency: 'CAD', flag: '🇨🇦', tax: 'CRA GST / HST / PST' },
   { code: 'DE', name: 'Germany', currency: 'EUR', flag: '🇩🇪', tax: 'EU Standard VAT 19%' },
   { code: 'EU', name: 'European Union', currency: 'EUR', flag: '🇪🇺', tax: 'EU Cross-Border VAT 21%' },
 ]
@@ -141,6 +142,9 @@ export default function OnboardingWizard({ currentUser }: {
   const [licenseMode, setLicenseMode] = useState<LicenseModeId>('trial-90')
   const [licenseKeyInput, setLicenseKeyInput] = useState('')
   const [country, setCountry] = useState('PK')
+  const [regionId, setRegionId] = useState('punjab')
+  const [taxNumber, setTaxNumber] = useState('')
+  const [selectedTaxCodes, setSelectedTaxCodes] = useState<string[]>([])
   const [selectedSectorId, setSelectedSectorId] = useState('All_FullSuite')
   const [selectedModules, setSelectedModules] = useState<string[]>([
     'overview', 'sales', 'procurement', 'banking', 'accounting',
@@ -148,6 +152,34 @@ export default function OnboardingWizard({ currentUser }: {
   ])
   const [companyName, setCompanyName] = useState('Apex Enterprise')
   const [saving, setSaving] = useState(false)
+
+  // Current Country & Region Tax Config
+  const countryConfig = GLOBAL_TAX_STRUCTURES[country] || GLOBAL_TAX_STRUCTURES.PK
+  const activeRegion = countryConfig.regions.find(r => r.id === regionId) || countryConfig.regions[0]
+
+  // When Country Changes, update default region and tax codes
+  useEffect(() => {
+    const defaultRegion = countryConfig.regions[0]
+    if (defaultRegion) {
+      setRegionId(defaultRegion.id)
+      setSelectedTaxCodes(defaultRegion.taxCodes.map(tc => tc.code))
+    }
+  }, [country])
+
+  // When Region Changes, update active tax codes
+  const handleRegionChange = (newRegionId: string) => {
+    setRegionId(newRegionId)
+    const region = countryConfig.regions.find(r => r.id === newRegionId)
+    if (region) {
+      setSelectedTaxCodes(region.taxCodes.map(tc => tc.code))
+    }
+  }
+
+  const toggleTaxCode = (code: string) => {
+    setSelectedTaxCodes(prev =>
+      prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]
+    )
+  }
 
   const handleSectorChange = (sectorId: string) => {
     setSelectedSectorId(sectorId)
@@ -176,20 +208,32 @@ export default function OnboardingWizard({ currentUser }: {
 
   const handleFinish = async () => {
     setSaving(true)
-    const selectedCountry = COUNTRIES.find(c => c.code === country)
+    const selectedCountry = COUNTRIES.find(c => c.code === country) || COUNTRIES[0]
     const finalCompanyName = companyName.trim() || 'Apex Enterprise'
 
-    if (selectedCountry) {
-      setActiveCurrency(selectedCountry.currency)
-      localStorage.setItem('onboarding_country', selectedCountry.code)
-      localStorage.setItem('onboarding_country_name', selectedCountry.name)
-    }
+    setActiveCurrency(selectedCountry.currency)
+    localStorage.setItem('onboarding_country', selectedCountry.code)
+    localStorage.setItem('onboarding_country_name', selectedCountry.name)
+    localStorage.setItem('onboarding_region_id', regionId)
+    localStorage.setItem('onboarding_region_name', activeRegion?.name || 'Standard')
+    localStorage.setItem('onboarding_tax_authority', activeRegion?.taxAuthority || selectedCountry.tax)
+    localStorage.setItem('onboarding_tax_number', taxNumber.trim())
 
-    const finalModules = Array.from(new Set([...selectedModules, 'overview', 'administration']))
-    localStorage.setItem('erp_enabled_modules', JSON.stringify(finalModules))
-    localStorage.setItem('onboarding_company_name', finalCompanyName)
-    localStorage.setItem('onboarding_license_mode', licenseMode)
-    localStorage.setItem('onboarding_sector_id', selectedSectorId)
+    // Filter only active chosen tax codes for Invoicing
+    const activeCodesList = (activeRegion?.taxCodes || []).filter(tc =>
+      selectedTaxCodes.length === 0 || selectedTaxCodes.includes(tc.code)
+    )
+    localStorage.setItem('onboarding_active_tax_codes', JSON.stringify(activeCodesList))
+
+    const userEmail = (currentUser?.email || '').toLowerCase().trim();
+    const finalModules = Array.from(new Set([...selectedModules, 'overview', 'administration']));
+    if (userEmail) {
+      localStorage.setItem(`erp_enabled_modules_${userEmail}`, JSON.stringify(finalModules));
+    }
+    localStorage.setItem('erp_enabled_modules', JSON.stringify(finalModules));
+    localStorage.setItem('onboarding_company_name', finalCompanyName);
+    localStorage.setItem('onboarding_license_mode', licenseMode);
+    localStorage.setItem('onboarding_sector_id', selectedSectorId);
 
     // Sync license mode and start date
     if (licenseMode === 'licensed' && licenseKeyInput.trim()) {
@@ -210,7 +254,9 @@ export default function OnboardingWizard({ currentUser }: {
         body: JSON.stringify({
           companyName: finalCompanyName,
           country: selectedCountry?.name || 'Pakistan',
-          currency: selectedCountry?.currency || 'PKR'
+          currency: selectedCountry?.currency || 'PKR',
+          taxAuthority: activeRegion?.taxAuthority,
+          taxNumber: taxNumber.trim()
         })
       });
     } catch {}
@@ -306,7 +352,7 @@ export default function OnboardingWizard({ currentUser }: {
                 {LICENSE_MODES.map(mode => (
                   <div
                     key={mode.id}
-                    onClick={() => setLicenseMode(mode.id)}
+                    onClick={() => setLicenseMode(mode.id as any)}
                     className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex items-start justify-between gap-3 ${
                       licenseMode === mode.id
                         ? 'border-teal-500 bg-teal-50/50 dark:bg-teal-950/30 shadow-xs'
@@ -325,7 +371,7 @@ export default function OnboardingWizard({ currentUser }: {
                     <input
                       type="radio"
                       checked={licenseMode === mode.id}
-                      onChange={() => setLicenseMode(mode.id)}
+                      onChange={() => setLicenseMode(mode.id as any)}
                       className="accent-teal-600 mt-1 shrink-0 cursor-pointer"
                     />
                   </div>
@@ -347,16 +393,17 @@ export default function OnboardingWizard({ currentUser }: {
             </div>
           )}
 
-          {/* STEP 2: Country, Tax Authority & Base Currency */}
+          {/* STEP 2: Country, Regional Tax Authority & Base Currency */}
           {step === 2 && (
             <div className="space-y-3.5 animate-in fade-in">
               <div>
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                  <Globe className="w-4 h-4 text-teal-600" /> 2. Operating Country & Currency
+                  <Globe className="w-4 h-4 text-teal-600" /> 2. Operating Country, Province & Tax Engine
                 </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">Configures global VAT/Sales Tax, statutory payroll brackets, and base currency.</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Configures global VAT/GST rules, provincial authority rates, and statutory tax numbers.</p>
               </div>
 
+              {/* Country Selection */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {COUNTRIES.map(c => (
                   <button
@@ -377,15 +424,95 @@ export default function OnboardingWizard({ currentUser }: {
                 ))}
               </div>
 
-              <div className="space-y-1 pt-1">
-                <label className="font-bold text-[11px] text-slate-900 dark:text-white">Legal Company / Organization Name</label>
-                <input
-                  type="text"
-                  value={companyName}
-                  onChange={e => setCompanyName(e.target.value)}
-                  placeholder="e.g. Apex Industrial Corporation"
-                  className="w-full text-xs px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                {/* Legal Company Name */}
+                <div className="space-y-1">
+                  <label className="font-bold text-[11px] text-slate-900 dark:text-white">Legal Company / Organization Name</label>
+                  <input
+                    type="text"
+                    value={companyName}
+                    onChange={e => setCompanyName(e.target.value)}
+                    placeholder="e.g. Apex Industrial Corporation"
+                    className="w-full text-xs px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* Province / State / Regional Authority (if applicable) */}
+                {countryConfig.hasProvinces ? (
+                  <div className="space-y-1">
+                    <label className="font-bold text-[11px] text-slate-900 dark:text-white flex items-center justify-between">
+                      <span>{countryConfig.provinceLabel}</span>
+                      <span className="text-[10px] text-teal-600 font-semibold">Localized Authority</span>
+                    </label>
+                    <select
+                      value={regionId}
+                      onChange={e => handleRegionChange(e.target.value)}
+                      className="w-full text-xs px-3.5 py-2 rounded-xl border border-teal-300 dark:border-teal-700 bg-teal-50/50 dark:bg-teal-950/40 text-slate-900 dark:text-white font-bold focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      {countryConfig.regions.map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} · ({r.taxAuthority})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="font-bold text-[11px] text-slate-900 dark:text-white">Statutory Tax Authority</label>
+                    <div className="w-full text-xs px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-2 font-medium">
+                      <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
+                      <span className="truncate">{activeRegion?.taxAuthority}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Statutory Tax ID & Active Rates Card */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                <div className="space-y-1">
+                  <label className="font-bold text-[11px] text-slate-900 dark:text-white flex items-center justify-between">
+                    <span>{activeRegion?.taxNumberLabel || 'Tax Registration / VAT ID'}</span>
+                    <span className="text-[10px] text-slate-400">Printed on official invoices</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={taxNumber}
+                    onChange={e => setTaxNumber(e.target.value)}
+                    placeholder={activeRegion?.taxNumberPlaceholder || 'e.g. 1234567-8'}
+                    className="w-full text-xs px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* Active Tax Codes Available in Invoicing */}
+                <div className="space-y-1 pt-1">
+                  <div className="flex items-center justify-between text-[10px] text-slate-500">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">Registered Invoicing Tax Rates (Auto-Configured):</span>
+                    <span>{selectedTaxCodes.length} active rates</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {activeRegion?.taxCodes.map(tc => {
+                      const isSelected = selectedTaxCodes.includes(tc.code);
+                      return (
+                        <button
+                          key={tc.code}
+                          type="button"
+                          onClick={() => toggleTaxCode(tc.code)}
+                          className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-teal-100 dark:bg-teal-900/60 text-teal-900 dark:text-teal-200 border-teal-400 dark:border-teal-600'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700 opacity-50'
+                          }`}
+                        >
+                          <span>{isSelected ? '✓' : '+'}</span>
+                          <span>{tc.label}</span>
+                          <span className="px-1.5 py-0.2 rounded bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-300 font-mono text-[10px]">
+                            {tc.rate}%
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
           )}

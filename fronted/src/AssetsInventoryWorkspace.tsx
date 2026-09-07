@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useAssetsInventoryStore, useCoaStore, useProductsStore } from './stores';
 import { DataToolbar } from '@/components/ui/data-toolbar';
-import { Warehouse, Boxes } from 'lucide-react';
+import { Warehouse, Boxes, Package, AlertTriangle, CheckCircle, XCircle, Search, ShoppingCart } from 'lucide-react';
 import { StatusChip } from './components/ui/status-chip';
 import { EmptyState } from './components/ui/empty-state';
 import { money } from './lib/currency';
+import { CompactProductSelect } from './components/CompactProductSelect';
 
 // ─── Shared Select ───────────────────────────────────────────────────────────
 const AccSelect = ({ value, onChange, accounts, label, filter }: any) => (
@@ -156,7 +157,6 @@ const AssetRegister: React.FC<{ activeEntityId: string; accounts: any[] }> = ({ 
             </div>
             <div className="modal-footer">
               <button type="button" className="secondary" onClick={() => setDeprModal(null)}>Cancel</button>
-              <button type="button" className="secondary" onClick={(e) => { e.preventDefault(); alert("Draft saved locally"); }}>Save Draft</button>
               <button onClick={runDepreciation} disabled={!deprForm.expenseAccId || !deprForm.accumAccId || (userRole !== 'admin' && userRole !== 'accountant' && userRole !== 'asset-manager')} className="primary">Run Depreciation</button>
             </div>
           </div>
@@ -194,7 +194,6 @@ const AssetRegister: React.FC<{ activeEntityId: string; accounts: any[] }> = ({ 
             </div>
             <div className="modal-footer">
               <button type="button" className="secondary" onClick={() => setDisposeModal(null)}>Cancel</button>
-              <button type="button" className="secondary" onClick={(e) => { e.preventDefault(); alert("Draft saved locally"); }}>Save Draft</button>
               <button onClick={disposeAsset} disabled={!dispForm.assetAccId || !dispForm.accumAccId || !dispForm.gainLossAccId || (userRole !== 'admin' && userRole !== 'accountant' && userRole !== 'asset-manager')} className="primary">Post Disposal</button>
             </div>
           </div>
@@ -248,8 +247,7 @@ const Warehouses: React.FC<{ activeEntityId: string }> = ({ activeEntityId }) =>
             </div>
             <div className="modal-footer">
               <button type="button" className="secondary" onClick={() => setShowForm(false)}>Cancel</button>
-              <button type="button" className="secondary" onClick={(e) => { e.preventDefault(); alert("Draft saved locally"); }}>Save Draft</button>
-<button onClick={save} disabled={!name} className="primary">Save Warehouse</button>
+              <button onClick={save} disabled={!name} className="primary">Save Warehouse</button>
             </div>
           </div>
         </div>
@@ -272,39 +270,164 @@ const Warehouses: React.FC<{ activeEntityId: string }> = ({ activeEntityId }) =>
 };
 
 // ─── 3. Stock Levels ─────────────────────────────────────────────────────────
-const StockLevels: React.FC<{ activeEntityId: string }> = ({ activeEntityId }) => {
+const StockLevels: React.FC<{ activeEntityId: string; products: any[] }> = ({ activeEntityId, products }) => {
   const levels = useAssetsInventoryStore((s) => s.stockLevels as any[]);
   const loading = useAssetsInventoryStore((s) => s.loading);
   const fetchStockLevels = useAssetsInventoryStore((s) => s.fetchStockLevels);
+  const setProductPurposeStore = useProductsStore((s) => s.setProductPurpose);
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [purposeFilter, setPurposeFilter] = useState<string>('all');
+  const [markForSaleModal, setMarkForSaleModal] = useState<any>(null);
+  const [salesPrice, setSalesPrice] = useState('0');
+  const [toast, setToast] = useState('');
 
   useEffect(() => { fetchStockLevels(activeEntityId); }, [activeEntityId]);
 
+  const notify = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3500); };
+
   const totalValue = levels.reduce((s, l) => s + (l.totalValue || 0), 0);
+
+  const getProductPurpose = (productId: string) => {
+    const product = products.find((p: any) => p.id === productId);
+    return product?.purpose || 'FinishedGood';
+  };
+
+  const filteredLevels = levels.filter(l => {
+    const matchesSearch = !searchTerm || 
+      l.productName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      l.productCode?.toLowerCase().includes(searchTerm.toLowerCase());
+    const purpose = getProductPurpose(l.productId);
+    const matchesPurpose = purposeFilter === 'all' || purpose === purposeFilter;
+    return matchesSearch && matchesPurpose;
+  });
+
+  const handleMarkForSale = async () => {
+    if (!markForSaleModal) return;
+    try {
+      await setProductPurposeStore(markForSaleModal.productId, 'FinishedGood');
+      notify(`✓ ${markForSaleModal.productName} is now available for sale!`);
+      setMarkForSaleModal(null);
+    } catch (e: any) {
+      notify(e.message || 'Error updating purpose');
+    }
+  };
 
   return (
     <div className="space-y-4">
+      {toast && <div className="px-4 py-2 bg-green-50 border border-green-200 text-green-800 rounded-xl text-sm">{toast}</div>}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] bg-[var(--color-surface-muted)] flex items-center justify-between">
           <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--color-text-strong)]"><span className="inline-block h-2 w-2 rotate-45 rounded-[2px] bg-gradient-to-br from-teal-500 to-emerald-700" />Stock Levels</p>
           <span className="text-[11px] text-[var(--color-text-muted)]">Total Inventory Value: {money(totalValue)}</span>
         </div>
+        <div className="flex flex-wrap gap-3 px-4 py-3 border-b border-[var(--color-border)]">
+          <input
+            type="text"
+            placeholder="Search by product name or code..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="flex-1 min-w-[200px] px-3 py-1.5 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]"
+          />
+          <select
+            value={purposeFilter}
+            onChange={e => setPurposeFilter(e.target.value)}
+            className="px-3 py-1.5 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]"
+          >
+            <option value="all">All Items</option>
+            <option value="FinishedGood">Finished Goods (For Sale)</option>
+            <option value="RawMaterial">Raw Materials</option>
+            <option value="Component">Components</option>
+            <option value="Consumable">Consumables</option>
+          </select>
+        </div>
         <table className="w-full text-left text-sm">
           <thead className="bg-teal-500/[0.05] dark:bg-teal-400/[0.07] text-gray-500 border-b border-gray-100 text-xs uppercase tracking-wider">
-            <tr><th className="py-3 px-4">Product</th><th className="py-3 px-4">Code</th><th className="py-3 px-4">Warehouse</th><th className="py-3 px-4 text-right">Qty on Hand</th><th className="py-3 px-4 text-right">Avg. Cost</th><th className="py-3 px-4 text-right">Total Value</th></tr>
+            <tr>
+              <th className="py-3 px-4">Product</th>
+              <th className="py-3 px-4">Code</th>
+              <th className="py-3 px-4">Purpose</th>
+              <th className="py-3 px-4">Warehouse</th>
+              <th className="py-3 px-4 text-right">Qty on Hand</th>
+              <th className="py-3 px-4 text-right">Avg. Cost</th>
+              <th className="py-3 px-4 text-right">Total Value</th>
+              <th className="py-3 px-4">Actions</th>
+            </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {levels.map(l => (<tr key={l.id} className="hover:bg-gray-50/60">
-              <td className="py-3 px-4 font-medium text-gray-900">{l.productName}</td>
-              <td className="py-3 px-4 font-mono text-xs text-gray-500">{l.productCode}</td>
-              <td className="py-3 px-4 text-gray-500">{l.warehouseName}</td>
-              <td className="py-3 px-4 text-right font-semibold">{l.quantityOnHand}</td>
-              <td className="py-3 px-4 text-right text-gray-500">{money(l.movingAverageCost)}</td>
-              <td className="py-3 px-4 text-right font-semibold text-blue-700">{money(l.totalValue)}</td>
-            </tr>))}
-            {!loading && levels.length === 0 && <tr><td colSpan={6}><EmptyState icon={Boxes} title="No stock on hand" hint='Process a GRN with "Inventory" destination to populate stock levels.' /></td></tr>}
+            {filteredLevels.map(l => {
+              const purpose = getProductPurpose(l.productId);
+              const isSellable = purpose === 'FinishedGood' || purpose === 'Service';
+              return (
+                <tr key={l.id} className="hover:bg-gray-50/60">
+                  <td className="py-3 px-4 font-medium text-gray-900">{l.productName}</td>
+                  <td className="py-3 px-4 font-mono text-xs text-gray-500">{l.productCode}</td>
+                  <td className="py-3 px-4">
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      isSellable ? 'bg-green-100 text-green-700' : 
+                      purpose === 'RawMaterial' ? 'bg-blue-100 text-blue-700' :
+                      purpose === 'Component' ? 'bg-purple-100 text-purple-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {purpose === 'FinishedGood' ? 'For Sale' :
+                       purpose === 'RawMaterial' ? 'Raw Material' :
+                       purpose === 'Component' ? 'Component' :
+                       purpose === 'Consumable' ? 'Consumable' : purpose}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-gray-500">{l.warehouseName}</td>
+                  <td className="py-3 px-4 text-right font-semibold">{l.quantityOnHand}</td>
+                  <td className="py-3 px-4 text-right text-gray-500">{money(l.movingAverageCost)}</td>
+                  <td className="py-3 px-4 text-right font-semibold text-blue-700">{money(l.totalValue)}</td>
+                  <td className="py-3 px-4">
+                    {!isSellable && (
+                      <button
+                        onClick={() => { setMarkForSaleModal({ productId: l.productId, productName: l.productName }); setSalesPrice('0'); }}
+                        className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg"
+                      >
+                        Mark for Sale
+                      </button>
+                    )}
+                    {isSellable && (
+                      <span className="text-green-600 text-xs font-medium">✓ In Catalog</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {!loading && filteredLevels.length === 0 && (
+              <tr><td colSpan={8}><EmptyState icon={Boxes} title="No stock on hand" hint='Process a GRN with "Inventory" destination to populate stock levels.' /></td></tr>
+            )}
           </tbody>
         </table>
       </div>
+
+      {/* Mark as For Sale Modal */}
+      {markForSaleModal && (
+        <div className="overlay">
+          <div className="modal" style={{ maxWidth: '450px', width: '95%' }}>
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">INVENTORY</p>
+                <h2>Mark as For Sale</h2>
+              </div>
+              <button type="button" className="close" onClick={() => setMarkForSaleModal(null)}>×</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', padding: '10px 0' }}>
+              <p className="text-sm text-gray-600">
+                Mark <strong>{markForSaleModal.productName}</strong> as a finished good for sale?
+              </p>
+              <p className="text-xs text-gray-500 bg-blue-50 p-3 rounded-xl border border-blue-100">
+                This item will appear in Products & Services and can be sold to customers. Stock will be tracked automatically.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="secondary" onClick={() => setMarkForSaleModal(null)}>Cancel</button>
+              <button onClick={handleMarkForSale} className="primary">Mark for Sale</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -351,13 +474,15 @@ const StockTransactionsView: React.FC<{ activeEntityId: string; warehouses: any[
             </div>
             
             <div className="form-grid">
-              <label>
-                Product *
-                <select value={form.productId} onChange={e => setForm(f => ({...f, productId: e.target.value}))}>
-                  <option value="">-- Select --</option>
-                  {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </label>
+              <div>
+                <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1">Product *</label>
+                <CompactProductSelect
+                  value={form.productId}
+                  onChange={v => setForm(f => ({ ...f, productId: v }))}
+                  products={products}
+                  placeholder="-- Select Product --"
+                />
+              </div>
               <label>
                 Warehouse *
                 <select value={form.warehouseId} onChange={e => setForm(f => ({...f, warehouseId: e.target.value}))}>
@@ -427,36 +552,280 @@ const StockTransactionsView: React.FC<{ activeEntityId: string; warehouses: any[
   );
 };
 
-// ─── Master Workspace ─────────────────────────────────────────────────────────
-type Tab = 'assets' | 'warehouses' | 'stock' | 'transactions';
+// ─── 5. Inventory Dashboard ──────────────────────────────────────────────────
+const InventoryDashboard: React.FC<{ activeEntityId: string; products: any[]; stockLevels: any[] }> = ({ activeEntityId, products, stockLevels }) => {
+  const setProductPurposeStore = useProductsStore((s) => s.setProductPurpose);
+  const [activeTab, setActiveTab] = useState<'all' | 'finished' | 'raw' | 'lowstock'>('all');
+  const [search, setSearch] = useState('');
+  const [toast, setToast] = useState('');
+  const [markForSaleModal, setMarkForSaleModal] = useState<any>(null);
 
-export const AssetsInventoryWorkspace: React.FC<{ activeEntityId: string; entities: any[]; initialTab?: Tab }> = ({ activeEntityId, initialTab }) => {
-  const [activeTab, setActiveTab] = useState<Tab>(initialTab || 'assets');
+  const notify = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3500) };
+
+  // Merge products with stock levels
+  const inventoryItems = products.map((p: any) => {
+    const stock = stockLevels.filter((s: any) => s.productId === p.id)
+    const totalQty = stock.reduce((sum: number, s: any) => sum + (s.quantityOnHand || 0), 0)
+    const totalValue = stock.reduce((sum: number, s: any) => sum + (s.totalValue || 0), 0)
+    const minQty = p.minimumQuantity || 0
+    const isLowStock = minQty > 0 && totalQty <= minQty
+    const isOutOfStock = totalQty === 0
+
+    return {
+      ...p,
+      totalQuantity: totalQty,
+      totalValue: totalValue,
+      minimumQuantity: minQty,
+      isLowStock,
+      isOutOfStock,
+      stockStatus: isOutOfStock ? 'out' : isLowStock ? 'low' : 'ok'
+    }
+  })
+
+  // Filter by tab
+  const filteredItems = inventoryItems.filter((p: any) => {
+    if (activeTab === 'finished') {
+      if (p.purpose !== 'FinishedGood' && p.purpose !== 'Service') return false
+    } else if (activeTab === 'raw') {
+      if (p.purpose !== 'RawMaterial' && p.purpose !== 'Component' && p.purpose !== 'Consumable') return false
+    } else if (activeTab === 'lowstock') {
+      if (!p.isLowStock && !p.isOutOfStock) return false
+    }
+
+    if (search) {
+      const q = search.toLowerCase()
+      return p.name?.toLowerCase().includes(q) || p.code?.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q)
+    }
+    return true
+  })
+
+  // KPI Stats
+  const stats = {
+    total: inventoryItems.length,
+    finishedGoods: inventoryItems.filter((p: any) => p.purpose === 'FinishedGood' || p.purpose === 'Service').length,
+    rawMaterials: inventoryItems.filter((p: any) => p.purpose === 'RawMaterial' || p.purpose === 'Component').length,
+    lowStock: inventoryItems.filter((p: any) => p.isLowStock).length,
+    outOfStock: inventoryItems.filter((p: any) => p.isOutOfStock).length,
+    totalValue: inventoryItems.reduce((sum: number, p: any) => sum + p.totalValue, 0)
+  }
+
+  const handleMarkForSale = async () => {
+    if (!markForSaleModal) return
+    try {
+      await setProductPurposeStore(markForSaleModal.id, 'FinishedGood')
+      notify(`✓ ${markForSaleModal.name} is now available for sale!`)
+      setMarkForSaleModal(null)
+    } catch (e: any) {
+      notify(e.message || 'Error')
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {toast && <div className="px-4 py-2 bg-green-50 border border-green-200 text-green-800 rounded-xl text-sm">{toast}</div>}
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-4 rounded-xl border border-gray-200 bg-white">
+          <div className="flex items-center gap-2 mb-2">
+            <Package className="w-4 h-4 text-blue-500" />
+            <span className="text-[10px] font-bold uppercase text-gray-500">Total Items</span>
+          </div>
+          <p className="text-2xl font-black text-gray-900">{stats.total}</p>
+          <p className="text-[10px] text-gray-400">Total Value: {money(stats.totalValue)}</p>
+        </div>
+
+        <div className="p-4 rounded-xl border border-gray-200 bg-white">
+          <div className="flex items-center gap-2 mb-2">
+            <CheckCircle className="w-4 h-4 text-green-500" />
+            <span className="text-[10px] font-bold uppercase text-gray-500">Finished Goods</span>
+          </div>
+          <p className="text-2xl font-black text-green-600">{stats.finishedGoods}</p>
+          <p className="text-[10px] text-gray-400">Ready for sale</p>
+        </div>
+
+        <div className="p-4 rounded-xl border border-gray-200 bg-white">
+          <div className="flex items-center gap-2 mb-2">
+            <Package className="w-4 h-4 text-blue-500" />
+            <span className="text-[10px] font-bold uppercase text-gray-500">Raw Materials</span>
+          </div>
+          <p className="text-2xl font-black text-blue-600">{stats.rawMaterials}</p>
+          <p className="text-[10px] text-gray-400">For manufacturing</p>
+        </div>
+
+        <div className={`p-4 rounded-xl border ${stats.lowStock + stats.outOfStock > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className={`w-4 h-4 ${stats.lowStock + stats.outOfStock > 0 ? 'text-red-500' : 'text-gray-400'}`} />
+            <span className="text-[10px] font-bold uppercase text-gray-500">Low Stock</span>
+          </div>
+          <p className={`text-2xl font-black ${stats.lowStock + stats.outOfStock > 0 ? 'text-red-600' : 'text-gray-400'}`}>{stats.lowStock + stats.outOfStock}</p>
+          <p className="text-[10px] text-gray-400">{stats.outOfStock} out of stock</p>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex flex-wrap gap-1 bg-gray-100/50 p-1 rounded-xl w-fit border border-gray-200/50">
+        {[
+          { id: 'all' as const, label: 'All Stock', count: stats.total },
+          { id: 'finished' as const, label: 'Finished Goods', count: stats.finishedGoods },
+          { id: 'raw' as const, label: 'Raw Materials', count: stats.rawMaterials },
+          { id: 'lowstock' as const, label: 'Low Stock Alert', count: stats.lowStock + stats.outOfStock },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+              activeTab === t.id
+                ? 'bg-white text-orange-600 shadow-sm border border-gray-200'
+                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200/50'
+            }`}
+          >
+            {t.label}
+            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+              activeTab === t.id ? 'bg-orange-100 text-orange-600' : 'bg-gray-200 text-gray-500'
+            }`}>
+              {t.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div className="relative max-w-md">
+        <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+        <input
+          type="text"
+          placeholder="Search by name, code, or category..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="w-full pl-9 pr-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-white"
+        />
+      </div>
+
+      {/* Stock Table */}
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-orange-500/[0.05] text-gray-500 border-b border-gray-100 text-xs uppercase tracking-wider">
+            <tr>
+              <th className="py-3 px-4">Product</th>
+              <th className="py-3 px-4">Purpose</th>
+              <th className="py-3 px-4 text-center">Qty on Hand</th>
+              <th className="py-3 px-4 text-center">Min Qty</th>
+              <th className="py-3 px-4 text-right">Total Value</th>
+              <th className="py-3 px-4 text-center">Status</th>
+              <th className="py-3 px-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {filteredItems.map((p: any) => (
+              <tr key={p.id} className={`hover:bg-gray-50/60 ${p.isOutOfStock ? 'bg-red-50/30' : p.isLowStock ? 'bg-yellow-50/30' : ''}`}>
+                <td className="py-3 px-4">
+                  <div className="font-medium text-gray-900">{p.name}</div>
+                  <div className="text-[10px] font-mono text-gray-500">{p.code}</div>
+                </td>
+                <td className="py-3 px-4">
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    p.purpose === 'FinishedGood' ? 'bg-green-100 text-green-700' :
+                    p.purpose === 'Service' ? 'bg-purple-100 text-purple-700' :
+                    p.purpose === 'RawMaterial' ? 'bg-blue-100 text-blue-700' :
+                    p.purpose === 'Component' ? 'bg-indigo-100 text-indigo-700' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>
+                    {p.purpose === 'FinishedGood' ? 'For Sale' :
+                     p.purpose === 'RawMaterial' ? 'Raw Material' :
+                     p.purpose === 'Component' ? 'Component' :
+                     p.purpose === 'Consumable' ? 'Consumable' :
+                     p.purpose === 'Service' ? 'Service' : p.purpose}
+                  </span>
+                </td>
+                <td className="py-3 px-4 text-center font-mono font-bold">{p.totalQuantity}</td>
+                <td className="py-3 px-4 text-center font-mono text-gray-500">{p.minimumQuantity || '—'}</td>
+                <td className="py-3 px-4 text-right font-mono font-semibold text-blue-700">{money(p.totalValue)}</td>
+                <td className="py-3 px-4 text-center">
+                  {p.isOutOfStock ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">
+                      <XCircle className="w-3 h-3" /> OUT
+                    </span>
+                  ) : p.isLowStock ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700">
+                      <AlertTriangle className="w-3 h-3" /> LOW
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                      <CheckCircle className="w-3 h-3" /> OK
+                    </span>
+                  )}
+                </td>
+                <td className="py-3 px-4">
+                  {p.purpose !== 'FinishedGood' && p.purpose !== 'Service' && (
+                    <button
+                      onClick={() => setMarkForSaleModal(p)}
+                      className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg flex items-center gap-1"
+                    >
+                      <ShoppingCart className="w-3 h-3" /> Mark for Sale
+                    </button>
+                  )}
+                  {(p.purpose === 'FinishedGood' || p.purpose === 'Service') && (
+                    <span className="text-green-600 text-xs font-medium flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" /> In Catalog
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {filteredItems.length === 0 && (
+              <tr>
+                <td colSpan={7}>
+                  <EmptyState icon={Package} title="No inventory items" hint="Process a GRN to receive items into inventory." />
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mark for Sale Modal */}
+      {markForSaleModal && (
+        <div className="overlay">
+          <div className="modal" style={{ maxWidth: '450px', width: '95%' }}>
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">INVENTORY</p>
+                <h2>Mark as For Sale</h2>
+              </div>
+              <button type="button" className="close" onClick={() => setMarkForSaleModal(null)}>×</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', padding: '10px 0' }}>
+              <p className="text-sm text-gray-600">
+                Mark <strong>{markForSaleModal.name}</strong> as a finished good for sale?
+              </p>
+              <p className="text-xs text-gray-500 bg-blue-50 p-3 rounded-xl border border-blue-100">
+                This item will appear in Products & Services and can be sold to customers. Stock will be tracked automatically.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="secondary" onClick={() => setMarkForSaleModal(null)}>Cancel</button>
+              <button onClick={handleMarkForSale} className="primary">Mark for Sale</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Master Workspace ─────────────────────────────────────────────────────────
+export const AssetsInventoryWorkspace: React.FC<{ activeEntityId: string; entities: any[] }> = ({ activeEntityId }) => {
   const accounts = useCoaStore((s) => s.accounts);
   const fetchAccounts = useCoaStore((s) => s.fetchAccounts);
 
-  const warehouses = useAssetsInventoryStore((s) => s.warehouses);
-  const fetchWarehouses = useAssetsInventoryStore((s) => s.fetchWarehouses);
-
-  const products = useProductsStore((s) => s.products);
-  const fetchProducts = useProductsStore((s) => s.fetchProducts);
-
   useEffect(() => {
     fetchAccounts();
-    fetchWarehouses(activeEntityId);
-    fetchProducts();
   }, [activeEntityId]);
-
-  const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'assets', label: 'Asset Register', icon: '🏛' },
-    { id: 'warehouses', label: 'Warehouses', icon: '🏭' },
-    { id: 'stock', label: 'Stock Levels', icon: '📦' },
-    { id: 'transactions', label: 'Stock Transactions', icon: '🔄' },
-  ];
 
   return (
     <div className="p-4 max-w-7xl mx-auto space-y-4">
-      {/* Page Header — AMS Signature Hero Band */}
+      {/* Page Header */}
       <div className="relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
         <div className="absolute inset-0 bg-gradient-to-r from-teal-500/10 via-teal-500/[0.03] to-transparent pointer-events-none" />
         <div className="absolute -right-10 -top-16 w-56 h-56 rounded-full bg-teal-500/10 blur-3xl pointer-events-none" />
@@ -468,27 +837,16 @@ export const AssetsInventoryWorkspace: React.FC<{ activeEntityId: string; entiti
             </div>
             <div>
               <div className="flex items-center gap-2.5">
-                <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-strong)]">Assets &amp; Inventory</h1>
+                <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-strong)]">Asset Register</h1>
                 <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-teal-500/25 bg-teal-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400"><span className="h-1.5 w-1.5 rounded-full bg-teal-500 animate-pulse" /> Live Ledger</span>
               </div>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Manage fixed assets, warehouses, stock levels, depreciation, and valuation.</p>
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Manage fixed assets, depreciation, and disposal.</p>
             </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-1 shrink-0 bg-gray-100/50 p-1 rounded-xl w-fit border border-gray-200/50">
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`px-2 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1 ${activeTab === t.id ? 'bg-white text-blue-600 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200/50'}`}>
-              <span className="text-sm">{t.icon}</span> {t.label}
-            </button>
-          ))}
           </div>
         </div>
       </div>
       <div>
-        {activeTab === 'assets' && <AssetRegister activeEntityId={activeEntityId} accounts={accounts} />}
-        {activeTab === 'warehouses' && <Warehouses activeEntityId={activeEntityId} />}
-        {activeTab === 'stock' && <StockLevels activeEntityId={activeEntityId} />}
-        {activeTab === 'transactions' && <StockTransactionsView activeEntityId={activeEntityId} warehouses={warehouses} products={products} />}
+        <AssetRegister activeEntityId={activeEntityId} accounts={accounts} />
       </div>
     </div>
   );

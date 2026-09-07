@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Settings, ShieldCheck, Globe, Database, Save, RotateCcw, AlertTriangle,
   Building2, CheckCircle2, Lock, FileText, Layers, Hash, Coins, Sparkles, Zap, ShieldAlert,

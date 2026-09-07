@@ -92,6 +92,10 @@ export const salesApi = {
     return apiClient(`/sales-invoices/${id}/status`, { method: 'PATCH', body: { status: Number(status) } });
   },
 
+  postInvoice: async (id: string, accounts?: { arAccountId?: string; revenueAccountId?: string; taxLiabilityAccountId?: string }): Promise<any> => {
+    return apiClient(`/sales-invoices/${id}/post`, { method: 'POST', body: accounts || {} });
+  },
+
   getCustomerReceipts: async (companyId?: string): Promise<CustomerReceipt[]> => {
     return apiClient<CustomerReceipt[]>('/customer-payments', { params: { companyId } });
   },

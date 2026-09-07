@@ -7,6 +7,7 @@ import { DataToolbar } from '@/components/ui/data-toolbar';
 import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
 import { EmptyState, TableSkeleton } from './components/ui/empty-state';
 import { StatusChip } from './components/ui/status-chip';
+import { CompactSelect } from './components/CompactSelect';
 import type { Entity } from './EntitySettings';
 
 interface ApBill {
@@ -58,17 +59,30 @@ export const AccountsPayableView: React.FC<AccountsPayableViewProps> = ({ active
   useEffect(() => { load(); }, [activeEntityId]);
 
   const filtered = useMemo(() => {
-    return bills.filter(b => {
-      if (statusFilter !== 'All' && b.status !== statusFilter) return false;
-      if (query.trim()) {
-        const q = query.toLowerCase();
-        if (!b.vendorName.toLowerCase().includes(q) && !b.billNumber.toLowerCase().includes(q)) return false;
-      }
-      return true;
-    });
+    return bills
+      .filter(b => {
+        if (b.status === 'Draft' || b.status === 'Void' || b.status === 'Cancelled') return false;
+        if (statusFilter !== 'All' && b.status !== statusFilter) return false;
+        if (query.trim()) {
+          const q = query.toLowerCase();
+          if (!b.vendorName.toLowerCase().includes(q) && !b.billNumber.toLowerCase().includes(q)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const dateA = a.date || a.dueDate || '';
+        const dateB = b.date || b.dueDate || '';
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA);
+        }
+        const numA = a.billNumber || '';
+        const numB = b.billNumber || '';
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' });
+      });
   }, [bills, query, statusFilter]);
 
-  const totalDue = bills.reduce((s, b) => s + (b.amountDue || 0), 0);
+  const activeBills = useMemo(() => bills.filter(b => b.status !== 'Draft' && b.status !== 'Void' && b.status !== 'Cancelled'), [bills]);
+  const totalDue = useMemo(() => activeBills.reduce((s, b) => s + (b.amountDue || 0), 0), [activeBills]);
 
   const exportHeaders = ['Bill #', 'Vendor', 'Date', 'Due Date', 'Total', 'Paid', 'Due', 'Status'];
   const exportRows = filtered.map(b => [b.billNumber, b.vendorName, b.date, b.dueDate, b.totalAmount, b.amountPaid, b.amountDue, b.status]);
@@ -121,11 +135,17 @@ export const AccountsPayableView: React.FC<AccountsPayableViewProps> = ({ active
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <Input placeholder="Search vendor, bill #..." value={query} onChange={e => setQuery(e.target.value)} className="pl-9 h-9 bg-white text-xs" />
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 outline-none">
-          <option value="All">All Statuses</option>
-          <option value="Open">Open</option>
-          <option value="PartiallyPaid">Partially Paid</option>
-        </select>
+        <CompactSelect
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: 'All', label: 'All Statuses' },
+            { value: 'Open', label: 'Open' },
+            { value: 'PartiallyPaid', label: 'Partially Paid' },
+          ]}
+          placeholder="Filter status..."
+          className="w-40 h-9"
+        />
       </div>
 
       {loading && <TableSkeleton rows={6} />}

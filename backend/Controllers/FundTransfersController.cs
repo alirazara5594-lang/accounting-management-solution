@@ -14,6 +14,7 @@ public class FundTransfersController(AccountingStore store) : ControllerBase
         var query = store.FundTransfers
             .Where(t => companyId == null || t.CompanyId == companyId)
             .OrderByDescending(t => t.TransferDate)
+            .ThenByDescending(t => t.TransferNumber)
             .Select(t => new
             {
                 t.Id,
@@ -63,5 +64,13 @@ public class FundTransfersController(AccountingStore store) : ControllerBase
         if (!store.CreateFundTransfer(request, out var transfer, out var error))
             return BadRequest(new { Error = error });
         return Created($"/api/v1/fund-transfers/{transfer!.Id}", transfer);
+    }
+
+    [HttpPost("{id}/void")]
+    public IActionResult VoidTransfer(Guid id)
+    {
+        if (store.VoidFundTransfer(id, out var error))
+            return Ok(new { message = "Fund transfer voided and ledger reversal posted." });
+        return BadRequest(new { Error = error });
     }
 }

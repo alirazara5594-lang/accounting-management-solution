@@ -73,8 +73,14 @@ export async function apiClient<T = any>(endpoint: string, options: RequestOptio
     } catch {
       errorData = { message: response.statusText || 'API Request failed' };
     }
+    const detail =
+      errorData.error ||
+      errorData.message ||
+      (errorData.errors ? (Array.isArray(errorData.errors) ? errorData.errors.join(', ') : Object.values(errorData.errors).flat().join(', ')) : null) ||
+      errorData.title ||
+      `Request failed with status ${response.status}`;
     throw new ApiError(
-      errorData.message || `Request failed with status ${response.status}`,
+      detail,
       response.status,
       errorData
     );

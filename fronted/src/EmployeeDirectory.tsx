@@ -88,12 +88,18 @@ export default function EmployeeDirectory() {
 
   useEffect(() => { fetchEmployees(); fetchDepartments(); fetchPositions(); fetchPayGrades(); }, []);
 
-  const filtered = employees.filter(e => {
-    if (search && !`${e.firstName} ${e.lastName} ${e.employeeNumber} ${e.email}`.toLowerCase().includes(search.toLowerCase())) return false;
-    if (countryFilter && e.country !== countryFilter) return false;
-    if (statusFilter && e.status !== statusFilter) return false;
-    return true;
-  });
+  const filtered = employees
+    .filter(e => {
+      if (search && !`${e.firstName} ${e.lastName} ${e.employeeNumber} ${e.email}`.toLowerCase().includes(search.toLowerCase())) return false;
+      if (countryFilter && e.country !== countryFilter) return false;
+      if (statusFilter && e.status !== statusFilter) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const numA = a.employeeNumber || `${a.firstName} ${a.lastName}`;
+      const numB = b.employeeNumber || `${b.firstName} ${b.lastName}`;
+      return numA.localeCompare(numB, undefined, { numeric: true, sensitivity: 'base' });
+    });
 
   const openCreate = () => {
     setEditing(null);

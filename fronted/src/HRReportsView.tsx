@@ -7,8 +7,9 @@ import { StatusChip } from './components/ui/status-chip';
 import { EmptyState } from './components/ui/empty-state';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Users, CalendarCheck2, HeartPulse, Banknote, Wallet, TrendingUp, Globe2, Building2, AlertTriangle, UserCheck } from 'lucide-react';
+import { Users, CalendarCheck2, HeartPulse, Banknote, Wallet, TrendingUp, Globe2, Building2, AlertTriangle, UserCheck, FileText } from 'lucide-react';
 import { money } from './lib/currency';
+import EmployeeCumulativeStatement from './components/EmployeeCumulativeStatement';
 
 const COUNTRY_OPTIONS: Record<string, string> = {
   US: 'United States', CA: 'Canada', UK: 'United Kingdom', DE: 'Germany', FR: 'France', NL: 'Netherlands',
@@ -146,6 +147,7 @@ export default function HRReportsView() {
           <TabsTrigger value="attendance"><CalendarCheck2 className="h-4 w-4" /> Attendance</TabsTrigger>
           <TabsTrigger value="leave"><HeartPulse className="h-4 w-4" /> Leave</TabsTrigger>
           <TabsTrigger value="payroll"><Banknote className="h-4 w-4" /> Payroll Cost</TabsTrigger>
+          <TabsTrigger value="employee-ledger"><FileText className="h-4 w-4" /> Employee Statement & PF</TabsTrigger>
           <TabsTrigger value="loans"><Wallet className="h-4 w-4" /> Loans</TabsTrigger>
         </TabsList>
 
@@ -440,6 +442,10 @@ export default function HRReportsView() {
               </TableBody>
             </Table>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="employee-ledger" className="space-y-4">
+          <EmployeeCumulativeStatement />
         </TabsContent>
       </Tabs>
     </div>

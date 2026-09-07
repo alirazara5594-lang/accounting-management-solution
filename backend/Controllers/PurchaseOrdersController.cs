@@ -9,7 +9,7 @@ namespace Zenabook.Api.Controllers;
 public class PurchaseOrdersController(AccountingStore store) : ControllerBase
 {
     [HttpGet]
-    public IActionResult GetAll() => Ok(store.PurchaseOrders);
+    public IActionResult GetAll() => Ok(store.PurchaseOrders.OrderByDescending(p => p.Date).ThenByDescending(p => p.PoNumber));
 
     [HttpGet("{id:guid}")]
     public IActionResult Get(Guid id) => store.FindPurchaseOrder(id) switch

@@ -12,6 +12,7 @@ import {
   Briefcase,
   Sparkles,
   Settings,
+  Package,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -30,7 +31,7 @@ export const NAVIGATION: NavGroup[] = [
   { name: 'Procurement', label: 'Purchasing', icon: ShoppingBag, short: 'Purchase', items: ['Vendors', 'Procurement Workspace', 'Bills', 'Debit Notes', 'Expense Claims', 'Vendor Payments', 'Vendor Statements', 'Payables Aging', 'Prepayments & Amortization', 'Purchase Reports'], moduleId: 'procurement' },
   { name: 'Banking & Payments', label: 'Banking & Payments', icon: Landmark, short: 'Bank', items: ['Bank Accounts', 'Cash Accounts', 'Bank Connection', 'Bank Import', 'Transactions', 'Bank Reconciliation', 'Voucher Management', 'Fund Transfers', 'Cash Flow Statements'], moduleId: 'banking' },
   { name: 'Accounting', label: 'Accounting', icon: BookOpen, short: 'Accounting', items: ['Chart of Accounts', 'Journal Entries', 'Fixed Assets', 'General Ledger', 'Accounts Receivable', 'Accounts Payable', 'Budgets', 'Financial Reports', 'Prepayment Schedules', 'Period Closing', 'Audit Trail', 'Intercompany Allocations', 'Lease Accounting'], moduleId: 'accounting' },
-  { name: 'Assets & Inventory', label: 'Assets & Inventory', icon: Boxes, short: 'Assets', items: ['Assets & Inventory Workspace', 'Depreciation Run', 'Depreciation Schedule', 'Valuation Reports'], moduleId: 'assets' },
+  { name: 'Assets & Inventory', label: 'Assets & Inventory', icon: Boxes, short: 'Assets', items: ['Asset Register', 'Inventory', 'Depreciation Run', 'Depreciation Schedule', 'Valuation Reports'], moduleId: 'assets' },
   { name: 'Manufacturing & Production', label: 'Production', icon: Factory, short: 'Factory', items: ['Manufacturing Workspace', 'Bill of Materials', 'Work Orders', 'Job Costing'], moduleId: 'manufacturing' },
   { name: 'Payroll & HR', label: 'Payroll', icon: Users, short: 'People', items: ['Employees', 'Attendance', 'Leave', 'Payroll', 'Salary', 'Loans & Advances', 'HR Reports', 'Attendance Policy', 'Biometric Configuration'], moduleId: 'payroll' },
   { name: 'Survey & Field Operations', label: 'Field Ops', icon: MapPin, short: 'Field', items: ['Surveys', 'Field Visits', 'Inspections', 'Work Orders', 'Field Expenses', 'Field Reports'], moduleId: 'field' },

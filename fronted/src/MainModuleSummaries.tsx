@@ -66,17 +66,22 @@ export function SalesSummaryView({ activeEntityId, setPage }: { activeEntityId?:
   }, [activeEntityId]);
 
   const { invoices } = sales;
-  const totalInvoiced = invoices.reduce((s, i) => s + (i.totalAmount || 0), 0);
-  const collected = invoices.reduce((s, i) => s + (i.paidAmount || 0), 0);
-  const outstanding = invoices.reduce((s, i) => s + ((i.amountDue ?? (i.totalAmount - (i.paidAmount || 0))) || 0), 0);
-  const openInvoices = invoices.filter(i => (i.amountDue ?? 0) > 0);
+  const isDraftInv = (i: any) => i.status === 0 || i.status === '0' || String(i.status).toLowerCase() === 'draft';
+  const isVoidInv = (i: any) => i.status === 3 || i.status === '3' || String(i.status).toLowerCase() === 'void' || String(i.status).toLowerCase() === 'cancelled';
+  const isPaidInv = (i: any) => i.status === 2 || i.status === '2' || String(i.status).toLowerCase() === 'paid';
+
+  const activeInvoices = invoices.filter(i => !isDraftInv(i) && !isVoidInv(i));
+  const totalInvoiced = activeInvoices.reduce((s, i) => s + (Number(i.totalAmount) || 0), 0);
+  const collected = invoices.filter(i => !isVoidInv(i)).reduce((s, i) => s + (Number(i.paidAmount || (isPaidInv(i) ? i.totalAmount : 0)) || 0), 0);
+  const openInvoices = activeInvoices.filter(i => !isPaidInv(i) && (i.amountDue ?? (i.totalAmount - (i.paidAmount || 0))) > 0);
+  const outstanding = openInvoices.reduce((s, i) => s + (Number(i.amountDue ?? (i.totalAmount - (i.paidAmount || 0))) || 0), 0);
   const overdueCount = openInvoices.filter(i => new Date(i.dueDate).getTime() < Date.now()).length;
-  const overdueAmt = openInvoices.filter(i => new Date(i.dueDate).getTime() < Date.now()).reduce((s, i) => s + (i.amountDue ?? 0), 0);
+  const overdueAmt = openInvoices.filter(i => new Date(i.dueDate).getTime() < Date.now()).reduce((s, i) => s + (Number(i.amountDue ?? (i.totalAmount - (i.paidAmount || 0))) || 0), 0);
   const activeCustomers = customersStore.customers.filter(c => String(c.status) === 'Active').length;
   const collectionRate = totalInvoiced > 0 ? ((collected / totalInvoiced) * 100).toFixed(1) : '0';
 
   const invByStatus = [
-    { name: 'Paid', value: invoices.filter(i => (i.amountDue ?? 0) <= 0).length, color: 'success' },
+    { name: 'Paid', value: activeInvoices.filter(i => isPaidInv(i)).length, color: 'success' },
     { name: 'Unpaid', value: openInvoices.length, color: 'warning' },
     { name: 'Overdue', value: overdueCount, color: 'danger' },
   ].filter(d => d.value > 0);
@@ -93,14 +98,19 @@ export function SalesSummaryView({ activeEntityId, setPage }: { activeEntityId?:
   const cashAccArr = banking.cashAccounts;
 
   const arAgingBuckets: Record<string, number> = {}; BUCKETS.forEach(b => { arAgingBuckets[b] = 0; });
-  openInvoices.forEach((i: any) => { arAgingBuckets[getAgingBucket(i.dueDate)] += i.amountDue || 0; });
+  openInvoices.forEach((i: any) => { arAgingBuckets[getAgingBucket(i.dueDate)] += Number(i.amountDue ?? (i.totalAmount - (i.paidAmount || 0))) || 0; });
   const arAgingData = BUCKETS.map(b => ({ name: b, value: arAgingBuckets[b] }));
 
-  const unpaidBills = billsArr.filter((b: any) => (b.amountDue ?? b.totalAmount ?? b.total ?? 0) > 0);
+  const isDraftBill = (b: any) => b.status === 0 || b.status === '0' || String(b.status).toLowerCase() === 'draft';
+  const isVoidBill = (b: any) => b.status === 4 || b.status === '4' || String(b.status).toLowerCase() === 'void' || String(b.status).toLowerCase() === 'cancelled';
+  const isPaidBill = (b: any) => b.status === 3 || b.status === '3' || String(b.status).toLowerCase() === 'paid';
+
+  const activeBillsList = billsArr.filter((b: any) => !isDraftBill(b) && !isVoidBill(b));
+  const unpaidBills = activeBillsList.filter((b: any) => !isPaidBill(b) && ((b.amountDue ?? (b.totalAmount ? (b.totalAmount - (b.amountPaid || 0)) : b.total)) || 0) > 0);
   const apAgingBuckets: Record<string, number> = {}; BUCKETS.forEach(b => { apAgingBuckets[b] = 0; });
   unpaidBills.forEach((b: any) => {
-    const due = b.amountDue ?? (b.status !== 'Paid' ? (b.totalAmount ?? b.total ?? 0) : 0);
-    apAgingBuckets[getAgingBucket(b.dueDate)] += due;
+    const due = b.amountDue ?? (b.totalAmount ? (b.totalAmount - (b.amountPaid || 0)) : b.total ?? 0);
+    apAgingBuckets[getAgingBucket(b.dueDate)] += Number(due) || 0;
   });
   const apAgingData = BUCKETS.map(b => ({ name: b, value: apAgingBuckets[b] }));
   const apOverdueTotal = apAgingBuckets['1-30'] + apAgingBuckets['31-60'] + apAgingBuckets['61-90'] + apAgingBuckets['90+'];
@@ -362,11 +372,19 @@ export function ProcurementSummaryView({ activeEntityId, setPage }: { activeEnti
   }, [activeEntityId]);
 
   const { orders, bills, requests, grns } = proc;
-  const billTotal = bills.reduce((s, b: any) => s + (b.totalAmount || b.total || 0), 0);
-  const orderValue = orders.reduce((s, o: any) => s + (o.totalAmount || o.total || 0), 0);
+  const isDraftBill = (b: any) => b.status === 0 || b.status === '0' || String(b.status).toLowerCase() === 'draft';
+  const isVoidBill = (b: any) => b.status === 4 || b.status === '4' || String(b.status).toLowerCase() === 'void' || String(b.status).toLowerCase() === 'cancelled';
+  const isPaidBill = (b: any) => b.status === 3 || b.status === '3' || String(b.status).toLowerCase() === 'paid';
+
+  const activeBills = (bills as any[]).filter(b => !isDraftBill(b) && !isVoidBill(b));
+  const activeOrders = (orders as any[]).filter(o => o.status !== 'Canceled' && o.status !== 4);
+
+  const billTotal = activeBills.reduce((s, b: any) => s + Number(b.totalAmount || b.total || 0), 0);
+  const orderValue = activeOrders.reduce((s, o: any) => s + Number(o.totalAmount || o.total || 0), 0);
   const openRequests = requests.filter(r => !['Closed', 'Approved'].includes(r.status)).length;
-  const paidBills = bills.filter((b: any) => b.status === 'Paid').length;
-  const unpaidBills = bills.length - paidBills;
+  const paidBills = activeBills.filter((b: any) => isPaidBill(b)).length;
+  const openBills = activeBills.filter((b: any) => !isPaidBill(b) && (b.amountDue ?? (b.totalAmount - (b.amountPaid || 0))) > 0);
+  const unpaidBills = openBills.length;
 
   const spendByMonth = [
     { m: 'Jan', po: orderValue * 0.5, bills: billTotal * 0.4 },
@@ -383,25 +401,22 @@ export function ProcurementSummaryView({ activeEntityId, setPage }: { activeEnti
   ].filter(d => d.value > 0);
 
   const apAgingBuckets: Record<string, number> = {}; BUCKETS.forEach(b => { apAgingBuckets[b] = 0; });
-  const unpaidBillsArr = (bills as any[]).filter(b => (b.amountDue ?? (b.totalAmount ?? b.total ?? 0) - (b.amountPaid ?? 0)) > 0);
-  unpaidBillsArr.forEach((b: any) => {
+  openBills.forEach((b: any) => {
     const due = b.amountDue ?? ((b.totalAmount ?? b.total ?? 0) - (b.amountPaid ?? 0));
-    apAgingBuckets[getAgingBucket(b.dueDate)] += due;
+    apAgingBuckets[getAgingBucket(b.dueDate)] += Number(due) || 0;
   });
   const apAgingData = BUCKETS.map(b => ({ name: b, value: apAgingBuckets[b] }));
   const totalAP = apAgingData.reduce((s, a) => s + a.value, 0);
 
-  const overdueCount = bills.filter((b: any) => {
-    const due = b.amountDue ?? ((b.totalAmount ?? b.total ?? 0) - (b.amountPaid ?? 0));
-    return due > 0 && new Date(b.dueDate).getTime() < Date.now();
+  const overdueCount = openBills.filter((b: any) => {
+    return new Date(b.dueDate).getTime() < Date.now();
   }).length;
 
-  const overdueAmt = bills.filter((b: any) => {
-    const due = b.amountDue ?? ((b.totalAmount ?? b.total ?? 0) - (b.amountPaid ?? 0));
-    return due > 0 && new Date(b.dueDate).getTime() < Date.now();
+  const overdueAmt = openBills.filter((b: any) => {
+    return new Date(b.dueDate).getTime() < Date.now();
   }).reduce((s, b: any) => s + (b.amountDue ?? ((b.totalAmount ?? b.total ?? 0) - (b.amountPaid ?? 0))), 0);
 
-  const disbursedPaid = bills.reduce((s, b: any) => s + (b.amountPaid ?? (b.status === 'Paid' ? b.totalAmount ?? b.total ?? 0 : 0)), 0);
+  const disbursedPaid = (bills as any[]).filter(b => !isVoidBill(b)).reduce((s, b: any) => s + (b.amountPaid ?? (isPaidBill(b) ? b.totalAmount ?? b.total ?? 0 : 0)), 0);
   const paymentRate = billTotal > 0 ? ((disbursedPaid / billTotal) * 100).toFixed(1) : '0';
   const activeVendors = vendorsStore.vendors.filter((v: any) => String(v.status) === 'Active').length;
 

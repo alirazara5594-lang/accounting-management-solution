@@ -174,61 +174,128 @@ export function SurveysView({ activeEntityId }: { activeEntityId?: string }) {
         <KpiCard icon={AlertTriangle} label="Responses" value={responses} desc="Total responses" tone="amber" />
       </KpiGrid>
       {showForm && (
-        <Card className="p-4">
-          <div className="grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-3"><FormField label="Title"><Input value={form.title} onChange={e => setF('title', e.target.value)} placeholder="Survey title" /></FormField></div>
-            <div className="col-span-2"><FormField label="Category"><Select value={form.category} onValueChange={v => v !== null && setF('category', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{SURVEY_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-2"><FormField label="Region"><Input value={form.region} onChange={e => setF('region', e.target.value)} /></FormField></div>
-            <div className="col-span-2"><FormField label="Start Date"><Input type="date" value={form.startDate} onChange={e => setF('startDate', e.target.value)} /></FormField></div>
-            <div className="col-span-1"><FormField label="Target"><Input type="number" value={form.targetResponses} onChange={e => setF('targetResponses', e.target.value)} /></FormField></div>
-            <div className="col-span-2"><Button onClick={save} disabled={saving || !form.title}><Save className="mr-1.5 h-4 w-4" />Create</Button></div>
+        <Card className="p-5 border border-[var(--color-border)] shadow-md bg-[var(--color-surface)] rounded-xl space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
+            <h3 className="font-bold text-sm text-[var(--color-text-strong)] flex items-center gap-2">
+              <ClipboardList className="w-4 h-4 text-lime-600 dark:text-lime-400" /> Create New Field Survey
+            </h3>
+            <Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="md:col-span-2">
+              <FormField label="Survey Title">
+                <Input value={form.title} onChange={e => setF('title', e.target.value)} placeholder="e.g. Q3 Customer Satisfaction & Field Support Feedback" />
+              </FormField>
+            </div>
+
+            <FormField label="Category">
+              <Select value={form.category} onValueChange={v => v !== null && setF('category', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{SURVEY_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+
+            <FormField label="Target Responses">
+              <Input type="number" value={form.targetResponses} onChange={e => setF('targetResponses', e.target.value)} placeholder="100" />
+            </FormField>
+
+            <FormField label="Region / Territory">
+              <Input value={form.region} onChange={e => setF('region', e.target.value)} placeholder="e.g. North Zone / Islamabad" />
+            </FormField>
+
+            <FormField label="Start Date">
+              <Input type="date" value={form.startDate} onChange={e => setF('startDate', e.target.value)} />
+            </FormField>
+
+            <FormField label="End Date (Optional)">
+              <Input type="date" value={form.endDate} onChange={e => setF('endDate', e.target.value)} />
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Assigned Lead / Supervisor">
+                <Select value={form.assignedTo} onValueChange={v => v !== null && setF('assignedTo', v)}>
+                  <SelectTrigger><SelectValue placeholder="Select lead" /></SelectTrigger>
+                  <SelectContent>{employees.filter(e => e.status === 'Active').map(e => <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName} ({(e as any).role || (e as any).jobTitle || 'Staff'})</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+            </div>
+
+            <div className="md:col-span-2">
+              <FormField label="Survey Scope / Description">
+                <Input value={form.description} onChange={e => setF('description', e.target.value)} placeholder="e.g. Measure on-site response time, equipment reliability, and satisfaction" />
+              </FormField>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
+            <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+            <Button size="sm" onClick={save} disabled={saving || !form.title} className="bg-lime-600 hover:bg-lime-700 text-white">
+              <Save className="mr-1.5 h-4 w-4" /> Create Survey
+            </Button>
           </div>
         </Card>
       )}
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
-              <th className="text-left p-3 font-medium">Survey</th>
-              <th className="text-left p-3 font-medium">Category</th>
-              <th className="text-left p-3 font-medium">Region</th>
-              <th className="text-left p-3 font-medium">Assigned</th>
-              <th className="text-right p-3 font-medium">Responses</th>
-              <th className="text-center p-3 font-medium">Progress</th>
-              <th className="text-center p-3 font-medium">Status</th>
-              <th className="text-right p-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {surveys.map(s => {
-              const pct = s.targetResponses > 0 ? Math.min(100, Math.round((s.responseCount / s.targetResponses) * 100)) : 0;
-              return (
-                <tr key={s.id} className="border-b hover:bg-muted/30 transition-colors">
-                  <td className="p-3"><p className="font-semibold">{s.title}</p><p className="font-mono text-xs text-muted-foreground">{s.surveyNumber}</p></td>
-                  <td className="p-3"><Badge variant="outline">{s.category}</Badge></td>
-                  <td className="p-3">{s.region || '—'}</td>
-                  <td className="p-3">{empName(employees, s.assignedTo)}</td>
-                  <td className="p-3 text-right font-mono">{s.responseCount}/{s.targetResponses}</td>
-                  <td className="p-3">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden"><div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} /></div>
-                      <span className="text-xs text-muted-foreground">{pct}%</span>
-                    </div>
-                  </td>
-                  <td className="p-3 text-center"><StatusChip status={s.status} label={s.status} hex={surveyStatusHex[s.status] ?? '#94a3b8'} /></td>
-                  <td className="p-3 text-right">
-                    {s.status === 'Draft' && <Button size="sm" variant="ghost" onClick={() => setSurveyStatus(s.id, 'Active')}>Launch</Button>}
-                    {s.status === 'Active' && <Button size="sm" variant="ghost" onClick={() => setSurveyStatus(s.id, 'Closed')}>Close</Button>}
-                  </td>
-                </tr>
-              );
-            })}
-            {surveys.length === 0 && <tr><td colSpan={8}><EmptyState icon={ClipboardList} title="No surveys found" hint="Launch a survey to start collecting field and customer responses." /></td></tr>}
-          </tbody>
-        </table>
+      <Card className="overflow-hidden border border-[var(--color-border)] shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
+                <th className="text-left p-3.5 font-semibold min-w-[240px] w-[30%]">Survey</th>
+                <th className="text-left p-3.5 font-semibold min-w-[140px]">Category</th>
+                <th className="text-left p-3.5 font-semibold min-w-[120px]">Region</th>
+                <th className="text-left p-3.5 font-semibold min-w-[180px] w-[20%]">Assigned Lead</th>
+                <th className="text-right p-3.5 font-semibold min-w-[110px]">Responses</th>
+                <th className="text-center p-3.5 font-semibold min-w-[130px]">Progress</th>
+                <th className="text-center p-3.5 font-semibold min-w-[100px]">Status</th>
+                <th className="text-right p-3.5 font-semibold min-w-[110px]">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {surveys.map(s => {
+                const pct = s.targetResponses > 0 ? Math.min(100, Math.round((s.responseCount / s.targetResponses) * 100)) : 0;
+                return (
+                  <tr key={s.id} className="border-b border-[var(--color-border-subtle)] hover:bg-muted/30 transition-colors">
+                    <td className="p-3.5 min-w-[240px]">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                          <ClipboardList size={16} />
+                        </div>
+                        <div>
+                          <p className="font-bold text-[var(--color-text-strong)]">{s.title}</p>
+                          <p className="font-mono text-xs text-[var(--color-text-muted)] mt-0.5">{s.surveyNumber}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-3.5"><Badge variant="outline">{s.category}</Badge></td>
+                    <td className="p-3.5 text-xs text-[var(--color-text-muted)]">{s.region || 'All Territories'}</td>
+                    <td className="p-3.5 min-w-[180px]">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-indigo-500/10 text-indigo-600 font-bold text-[10px] flex items-center justify-center shrink-0">
+                          {empName(employees, s.assignedTo)?.[0] || 'U'}
+                        </div>
+                        <span className="font-medium text-xs text-[var(--color-text-strong)]">{empName(employees, s.assignedTo)}</span>
+                      </div>
+                    </td>
+                    <td className="p-3.5 text-right font-mono font-semibold">{s.responseCount}/{s.targetResponses}</td>
+                    <td className="p-3.5">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden"><div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} /></div>
+                        <span className="text-xs text-muted-foreground font-mono">{pct}%</span>
+                      </div>
+                    </td>
+                    <td className="p-3.5 text-center"><StatusChip status={s.status} label={s.status} hex={surveyStatusHex[s.status] ?? '#94a3b8'} /></td>
+                    <td className="p-3.5 text-right">
+                      {s.status === 'Draft' && <Button size="sm" variant="outline" className="h-7 text-xs border-teal-500/30 text-teal-600 hover:bg-teal-50" onClick={() => setSurveyStatus(s.id, 'Active')}>Launch</Button>}
+                      {s.status === 'Active' && <Button size="sm" variant="outline" className="h-7 text-xs border-slate-500/30 text-slate-600 hover:bg-slate-50" onClick={() => setSurveyStatus(s.id, 'Closed')}>Close</Button>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {surveys.length === 0 && <tr><td colSpan={8}><EmptyState icon={ClipboardList} title="No surveys found" hint="Launch a survey to start collecting field and customer responses." /></td></tr>}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );
@@ -285,59 +352,129 @@ export function FieldVisitsView({ activeEntityId }: { activeEntityId?: string })
         <KpiCard icon={CheckCircle2} label="Completed" value={visits.filter(v => v.status === 'Completed').length} desc="Finished visits" tone="emerald" />
       </KpiGrid>
       {showForm && (
-        <Card className="p-4">
-          <div className="grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-2"><FormField label="Type"><Select value={form.visitType} onValueChange={v => v !== null && setF('visitType', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{VISIT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-2"><FormField label="Customer"><Select value={form.customerId} onValueChange={v => { if (v !== null) { setF('customerId', v); setF('customerName', custName(customers, v)); } }}>
-              <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
-              <SelectContent>{customers.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-2"><FormField label="Contact"><Input value={form.contactName} onChange={e => setF('contactName', e.target.value)} /></FormField></div>
-            <div className="col-span-2"><FormField label="Purpose"><Input value={form.purpose} onChange={e => setF('purpose', e.target.value)} /></FormField></div>
-            <div className="col-span-1"><FormField label="Date"><Input type="date" value={form.scheduledDate} onChange={e => setF('scheduledDate', e.target.value)} /></FormField></div>
-            <div className="col-span-1"><FormField label="Location"><Input value={form.location} onChange={e => setF('location', e.target.value)} /></FormField></div>
-            <div className="col-span-1"><FormField label="Assignee"><Select value={form.assignedTo} onValueChange={v => v !== null && setF('assignedTo', v)}>
-              <SelectTrigger><SelectValue placeholder="Assignee" /></SelectTrigger>
-              <SelectContent>{employees.filter(e => e.status === 'Active').map(e => <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-1"><Button onClick={save} disabled={saving || !form.purpose}><Save className="mr-1.5 h-4 w-4" />Schedule</Button></div>
+        <Card className="p-5 border border-[var(--color-border)] shadow-md bg-[var(--color-surface)] rounded-xl space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
+            <h3 className="font-bold text-sm text-[var(--color-text-strong)] flex items-center gap-2">
+              <CalendarCheck2 className="w-4 h-4 text-lime-600 dark:text-lime-400" /> Schedule On-Site Field Visit
+            </h3>
+            <Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="md:col-span-2">
+              <FormField label="Customer / Client">
+                <Select value={form.customerId} onValueChange={v => { if (v !== null) { setF('customerId', v); setF('customerName', custName(customers, v)); } }}>
+                  <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
+                  <SelectContent>{customers.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+            </div>
+
+            <FormField label="Visit Type">
+              <Select value={form.visitType} onValueChange={v => v !== null && setF('visitType', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{VISIT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+
+            <FormField label="Contact Person">
+              <Input value={form.contactName} onChange={e => setF('contactName', e.target.value)} placeholder="e.g. John Smith" />
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Purpose / Scope">
+                <Input value={form.purpose} onChange={e => setF('purpose', e.target.value)} placeholder="e.g. Quarterly equipment inspection & routine maintenance" />
+              </FormField>
+            </div>
+
+            <FormField label="Scheduled Date">
+              <Input type="date" value={form.scheduledDate} onChange={e => setF('scheduledDate', e.target.value)} />
+            </FormField>
+
+            <FormField label="Location / Site Address">
+              <Input value={form.location} onChange={e => setF('location', e.target.value)} placeholder="e.g. Plant 4, Sector I-9" />
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Assigned Technician / Lead">
+                <Select value={form.assignedTo} onValueChange={v => v !== null && setF('assignedTo', v)}>
+                  <SelectTrigger><SelectValue placeholder="Select technician" /></SelectTrigger>
+                  <SelectContent>{employees.filter(e => e.status === 'Active').map(e => <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName} ({(e as any).role || (e as any).jobTitle || 'Field Engineer'})</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+            </div>
+
+            <div className="md:col-span-2">
+              <FormField label="Preliminary Notes / Checklist">
+                <Input value={form.findings} onChange={e => setF('findings', e.target.value)} placeholder="e.g. Bring safety harness, multimeters, and calibration kit" />
+              </FormField>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
+            <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+            <Button size="sm" onClick={save} disabled={saving || !form.purpose} className="bg-lime-600 hover:bg-lime-700 text-white">
+              <Save className="mr-1.5 h-4 w-4" /> Schedule Visit
+            </Button>
           </div>
         </Card>
       )}
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
-              <th className="text-left p-3 font-medium">Visit</th>
-              <th className="text-left p-3 font-medium">Customer</th>
-              <th className="text-left p-3 font-medium">Purpose</th>
-              <th className="text-right p-3 font-medium">Date</th>
-              <th className="text-left p-3 font-medium">Assignee</th>
-              <th className="text-center p-3 font-medium">Status</th>
-              <th className="text-right p-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visits.map(v => (
-              <tr key={v.id} className="border-b hover:bg-muted/30 transition-colors">
-                <td className="p-3 font-mono font-medium">{v.visitNumber}</td>
-                <td className="p-3"><p className="font-medium">{v.customerName || '—'}</p><p className="text-xs text-muted-foreground">{v.visitType}</p></td>
-                <td className="p-3 text-muted-foreground max-w-[240px] truncate">{v.purpose}</td>
-                <td className="p-3 text-right">{v.scheduledDate}</td>
-                <td className="p-3">{empName(employees, v.assignedTo)}</td>
-                <td className="p-3 text-center"><StatusChip status={v.status} label={v.status} hex={visitStatusHex[v.status] ?? '#94a3b8'} /></td>
-                <td className="p-3 text-right">
-                  {v.status === 'Scheduled' && <Button size="sm" variant="ghost" onClick={() => setVisitStatus(v.id, 'InProgress')}>Start</Button>}
-                  {v.status === 'InProgress' && <Button size="sm" variant="ghost" onClick={() => setVisitStatus(v.id, 'Completed')}>Complete</Button>}
-                </td>
+      <Card className="overflow-hidden border border-[var(--color-border)] shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
+                <th className="text-left p-3.5 font-semibold w-[120px]">Visit #</th>
+                <th className="text-left p-3.5 font-semibold min-w-[220px] w-[26%]">Customer / Client</th>
+                <th className="text-left p-3.5 font-semibold min-w-[200px]">Purpose & Scope</th>
+                <th className="text-left p-3.5 font-semibold min-w-[120px]">Date</th>
+                <th className="text-left p-3.5 font-semibold min-w-[180px] w-[20%]">Assigned Technician</th>
+                <th className="text-center p-3.5 font-semibold w-[110px]">Status</th>
+                <th className="text-right p-3.5 font-semibold w-[120px]">Actions</th>
               </tr>
-            ))}
-            {visits.length === 0 && <tr><td colSpan={7}><EmptyState icon={CalendarCheck2} title="No field visits found" hint="Schedule an on-site visit to dispatch field teams." /></td></tr>}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visits.map(v => (
+                <tr key={v.id} className="border-b border-[var(--color-border-subtle)] hover:bg-muted/30 transition-colors">
+                  <td className="p-3.5 font-mono font-medium text-xs">{v.visitNumber}</td>
+                  <td className="p-3.5 min-w-[220px]">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                        {v.customerName?.[0] || 'C'}
+                      </div>
+                      <div>
+                        <p className="font-bold text-[var(--color-text-strong)]">{v.customerName || '—'}</p>
+                        <p className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5 mt-0.5">
+                          <span className="font-medium text-blue-600 dark:text-blue-400">{v.visitType}</span>
+                          {v.contactName && <span>· {v.contactName}</span>}
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-3.5 min-w-[200px]">
+                    <p className="line-clamp-2 text-xs font-medium text-[var(--color-text)]">{v.purpose}</p>
+                    {v.location && <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">📍 {v.location}</p>}
+                  </td>
+                  <td className="p-3.5 text-xs font-medium text-[var(--color-text)]">{v.scheduledDate}</td>
+                  <td className="p-3.5 min-w-[180px]">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-emerald-500/10 text-emerald-600 font-bold text-[10px] flex items-center justify-center shrink-0">
+                        {empName(employees, v.assignedTo)?.[0] || 'U'}
+                      </div>
+                      <span className="font-medium text-xs text-[var(--color-text-strong)]">{empName(employees, v.assignedTo)}</span>
+                    </div>
+                  </td>
+                  <td className="p-3.5 text-center"><StatusChip status={v.status} label={v.status} hex={visitStatusHex[v.status] ?? '#94a3b8'} /></td>
+                  <td className="p-3.5 text-right">
+                    {v.status === 'Scheduled' && <Button size="sm" variant="outline" className="h-7 text-xs border-blue-500/30 text-blue-600 hover:bg-blue-50" onClick={() => setVisitStatus(v.id, 'InProgress')}>Start</Button>}
+                    {v.status === 'InProgress' && <Button size="sm" variant="outline" className="h-7 text-xs border-emerald-500/30 text-emerald-600 hover:bg-emerald-50" onClick={() => setVisitStatus(v.id, 'Completed')}>Complete</Button>}
+                  </td>
+                </tr>
+              ))}
+              {visits.length === 0 && <tr><td colSpan={7}><EmptyState icon={CalendarCheck2} title="No field visits found" hint="Schedule an on-site visit to dispatch field teams." /></td></tr>}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );
@@ -394,57 +531,106 @@ export function InspectionsView({ activeEntityId }: { activeEntityId?: string })
         <KpiCard icon={AlertTriangle} label="Failed" value={inspections.filter(i => i.status === 'Failed').length} desc="Failed inspections" tone="rose" />
       </KpiGrid>
       {showForm && (
-        <Card className="p-4">
-          <div className="grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-2"><FormField label="Type"><Select value={form.inspectionType} onValueChange={v => v !== null && setF('inspectionType', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{INSPECTION_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-2"><FormField label="Location"><Input value={form.location} onChange={e => setF('location', e.target.value)} /></FormField></div>
-            <div className="col-span-2"><FormField label="Date"><Input type="date" value={form.scheduledDate} onChange={e => setF('scheduledDate', e.target.value)} /></FormField></div>
-            <div className="col-span-2"><FormField label="Inspector"><Select value={form.inspectorId} onValueChange={v => v !== null && setF('inspectorId', v)}>
-              <SelectTrigger><SelectValue placeholder="Inspector" /></SelectTrigger>
-              <SelectContent>{employees.filter(e => e.status === 'Active').map(e => <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-2"><FormField label="Reference"><Input value={form.reference} onChange={e => setF('reference', e.target.value)} /></FormField></div>
-            <div className="col-span-2"><Button onClick={save} disabled={saving || !form.location}><Save className="mr-1.5 h-4 w-4" />Schedule</Button></div>
+        <Card className="p-5 border border-[var(--color-border)] shadow-md bg-[var(--color-surface)] rounded-xl space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
+            <h3 className="font-bold text-sm text-[var(--color-text-strong)] flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-lime-600 dark:text-lime-400" /> Schedule Field Inspection
+            </h3>
+            <Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <FormField label="Inspection Type">
+              <Select value={form.inspectionType} onValueChange={v => v !== null && setF('inspectionType', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{INSPECTION_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+
+            <FormField label="Location / Facility">
+              <Input value={form.location} onChange={e => setF('location', e.target.value)} placeholder="e.g. Warehouse 3 / Site A" />
+            </FormField>
+
+            <FormField label="Scheduled Date">
+              <Input type="date" value={form.scheduledDate} onChange={e => setF('scheduledDate', e.target.value)} />
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Assigned Inspector / Engineer">
+                <Select value={form.inspectorId} onValueChange={v => v !== null && setF('inspectorId', v)}>
+                  <SelectTrigger><SelectValue placeholder="Select inspector" /></SelectTrigger>
+                  <SelectContent>{employees.filter(e => e.status === 'Active').map(e => <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName} ({(e as any).role || (e as any).jobTitle || 'Inspector'})</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+            </div>
+
+            <div className="md:col-span-2">
+              <FormField label="Reference / Work Order / Asset">
+                <Input value={form.reference} onChange={e => setF('reference', e.target.value)} placeholder="e.g. WO-2026-0042 or Asset #AST-882" />
+              </FormField>
+            </div>
+
+            <div className="md:col-span-4">
+              <FormField label="Inspection Scope / Initial Findings">
+                <Input value={form.findings} onChange={e => setF('findings', e.target.value)} placeholder="e.g. ISO 9001 quality check and safety seal verification" />
+              </FormField>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
+            <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+            <Button size="sm" onClick={save} disabled={saving || !form.location} className="bg-lime-600 hover:bg-lime-700 text-white">
+              <Save className="mr-1.5 h-4 w-4" /> Schedule Inspection
+            </Button>
           </div>
         </Card>
       )}
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
-              <th className="text-left p-3 font-medium">Inspection</th>
-              <th className="text-left p-3 font-medium">Type</th>
-              <th className="text-left p-3 font-medium">Location</th>
-              <th className="text-right p-3 font-medium">Date</th>
-              <th className="text-left p-3 font-medium">Inspector</th>
-              <th className="text-right p-3 font-medium">Score</th>
-              <th className="text-center p-3 font-medium">Status</th>
-              <th className="text-right p-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {inspections.map(i => (
-              <tr key={i.id} className="border-b hover:bg-muted/30 transition-colors">
-                <td className="p-3 font-mono font-medium">{i.inspectionNumber}</td>
-                <td className="p-3">{i.inspectionType}</td>
-                <td className="p-3">{i.location || '—'}</td>
-                <td className="p-3 text-right">{i.scheduledDate}</td>
-                <td className="p-3">{empName(employees, i.inspectorId)}</td>
-                <td className="p-3 text-right font-mono">{i.score || '—'}</td>
-                <td className="p-3 text-center"><StatusChip status={i.status} label={i.status} hex={inspectionStatusHex[i.status] ?? '#94a3b8'} /></td>
-                <td className="p-3 text-right">
-                  {i.status === 'Scheduled' && <Button size="sm" variant="ghost" onClick={() => setInspectionStatus(i.id, 'InProgress')}>Start</Button>}
-                  {i.status === 'InProgress' && <Button size="sm" variant="ghost" className="text-green-700" onClick={() => setInspectionStatus(i.id, 'Passed')}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Pass</Button>}
-                  {i.status === 'InProgress' && <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setInspectionStatus(i.id, 'Failed')}>Fail</Button>}
-                </td>
+      <Card className="overflow-hidden border border-[var(--color-border)] shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
+                <th className="text-left p-3.5 font-semibold w-[120px]">Inspection #</th>
+                <th className="text-left p-3.5 font-semibold min-w-[140px]">Type</th>
+                <th className="text-left p-3.5 font-semibold min-w-[200px] w-[26%]">Location & Reference</th>
+                <th className="text-left p-3.5 font-semibold min-w-[120px]">Date</th>
+                <th className="text-left p-3.5 font-semibold min-w-[180px] w-[20%]">Inspector</th>
+                <th className="text-right p-3.5 font-semibold min-w-[90px]">Score</th>
+                <th className="text-center p-3.5 font-semibold w-[110px]">Status</th>
+                <th className="text-right p-3.5 font-semibold w-[130px]">Actions</th>
               </tr>
-            ))}
-            {inspections.length === 0 && <tr><td colSpan={8}><EmptyState icon={ShieldCheck} title="No inspections found" hint="Schedule field inspections to track quality and compliance." /></td></tr>}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {inspections.map(i => (
+                <tr key={i.id} className="border-b border-[var(--color-border-subtle)] hover:bg-muted/30 transition-colors">
+                  <td className="p-3.5 font-mono font-medium text-xs">{i.inspectionNumber}</td>
+                  <td className="p-3.5"><Badge variant="outline">{i.inspectionType}</Badge></td>
+                  <td className="p-3.5 min-w-[200px]">
+                    <p className="font-bold text-[var(--color-text-strong)]">{i.location || '—'}</p>
+                    {i.reference && <p className="text-xs text-[var(--color-text-muted)] font-mono mt-0.5">Ref: {i.reference}</p>}
+                  </td>
+                  <td className="p-3.5 text-xs font-medium text-[var(--color-text)]">{i.scheduledDate}</td>
+                  <td className="p-3.5 min-w-[180px]">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-purple-500/10 text-purple-600 font-bold text-[10px] flex items-center justify-center shrink-0">
+                        {empName(employees, i.inspectorId)?.[0] || 'U'}
+                      </div>
+                      <span className="font-medium text-xs text-[var(--color-text-strong)]">{empName(employees, i.inspectorId)}</span>
+                    </div>
+                  </td>
+                  <td className="p-3.5 text-right font-mono font-semibold">{i.score > 0 ? `${i.score}%` : '—'}</td>
+                  <td className="p-3.5 text-center"><StatusChip status={i.status} label={i.status} hex={inspectionStatusHex[i.status] ?? '#94a3b8'} /></td>
+                  <td className="p-3.5 text-right">
+                    {i.status === 'Scheduled' && <Button size="sm" variant="outline" className="h-7 text-xs border-blue-500/30 text-blue-600 hover:bg-blue-50" onClick={() => setInspectionStatus(i.id, 'InProgress')}>Start</Button>}
+                    {i.status === 'InProgress' && <Button size="sm" variant="outline" className="h-7 text-xs border-emerald-500/30 text-emerald-600 hover:bg-emerald-50" onClick={() => setInspectionStatus(i.id, 'Passed')}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Pass</Button>}
+                    {i.status === 'InProgress' && <Button size="sm" variant="outline" className="h-7 text-xs border-rose-500/30 text-rose-600 hover:bg-rose-50" onClick={() => setInspectionStatus(i.id, 'Failed')}>Fail</Button>}
+                  </td>
+                </tr>
+              ))}
+              {inspections.length === 0 && <tr><td colSpan={8}><EmptyState icon={ShieldCheck} title="No inspections found" hint="Schedule field inspections to track quality and compliance." /></td></tr>}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );
@@ -503,64 +689,143 @@ export function WorkOrdersView({ activeEntityId }: { activeEntityId?: string }) 
         <KpiCard icon={Wallet} label="Total Cost" value={money(totalCost)} desc="Combined costs" tone="purple" />
       </KpiGrid>
       {showForm && (
-        <Card className="p-4">
-          <div className="grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-2"><FormField label="Type"><Select value={form.workType} onValueChange={v => v !== null && setF('workType', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{WORK_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-2"><FormField label="Customer"><Select value={form.customerId} onValueChange={v => { if (v !== null) { setF('customerId', v); setF('customerName', custName(customers, v)); } }}>
-              <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
-              <SelectContent>{customers.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-3"><FormField label="Description"><Input value={form.description} onChange={e => setF('description', e.target.value)} placeholder="Work to be performed" /></FormField></div>
-            <div className="col-span-1"><FormField label="Priority"><Select value={form.priority} onValueChange={v => v !== null && setF('priority', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="Low">Low</SelectItem><SelectItem value="Medium">Medium</SelectItem><SelectItem value="High">High</SelectItem><SelectItem value="Critical">Critical</SelectItem></SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-2"><FormField label="Assignee"><Select value={form.assignedTo} onValueChange={v => v !== null && setF('assignedTo', v)}>
-              <SelectTrigger><SelectValue placeholder="Assignee" /></SelectTrigger>
-              <SelectContent>{employees.filter(e => e.status === 'Active').map(e => <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-1"><FormField label="Date"><Input type="date" value={form.scheduledDate} onChange={e => setF('scheduledDate', e.target.value)} /></FormField></div>
-            <div className="col-span-1"><Button onClick={save} disabled={saving || !form.description}><Save className="mr-1.5 h-4 w-4" />Create</Button></div>
+        <Card className="p-5 border border-[var(--color-border)] shadow-md bg-[var(--color-surface)] rounded-xl space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
+            <h3 className="font-bold text-sm text-[var(--color-text-strong)] flex items-center gap-2">
+              <Wrench className="w-4 h-4 text-lime-600 dark:text-lime-400" /> Create Field Work Order
+            </h3>
+            <Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="md:col-span-2">
+              <FormField label="Customer / Client">
+                <Select value={form.customerId} onValueChange={v => { if (v !== null) { setF('customerId', v); setF('customerName', custName(customers, v)); } }}>
+                  <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
+                  <SelectContent>{customers.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+            </div>
+
+            <FormField label="Work Type">
+              <Select value={form.workType} onValueChange={v => v !== null && setF('workType', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{WORK_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+
+            <FormField label="Priority">
+              <Select value={form.priority} onValueChange={v => v !== null && setF('priority', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Low">Low</SelectItem>
+                  <SelectItem value="Medium">Medium</SelectItem>
+                  <SelectItem value="High">High</SelectItem>
+                  <SelectItem value="Critical">Critical</SelectItem>
+                </SelectContent>
+              </Select>
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Work Description">
+                <Input value={form.description} onChange={e => setF('description', e.target.value)} placeholder="e.g. Hydraulic pump overhaul and gasket replacement" />
+              </FormField>
+            </div>
+
+            <FormField label="Scheduled Date">
+              <Input type="date" value={form.scheduledDate} onChange={e => setF('scheduledDate', e.target.value)} />
+            </FormField>
+
+            <FormField label="Location / Site">
+              <Input value={form.location} onChange={e => setF('location', e.target.value)} placeholder="e.g. Unit 4, Industrial Zone" />
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Assigned Technician / Specialist">
+                <Select value={form.assignedTo} onValueChange={v => v !== null && setF('assignedTo', v)}>
+                  <SelectTrigger><SelectValue placeholder="Select technician" /></SelectTrigger>
+                  <SelectContent>{employees.filter(e => e.status === 'Active').map(e => <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName} ({(e as any).role || (e as any).jobTitle || 'Technician'})</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+            </div>
+
+            <FormField label="Est. Labor Hours">
+              <Input type="number" value={form.laborHours} onChange={e => setF('laborHours', e.target.value)} placeholder="4" />
+            </FormField>
+
+            <FormField label="Est. Labor Cost">
+              <Input type="number" value={form.laborCost} onChange={e => setF('laborCost', e.target.value)} placeholder="250.00" />
+            </FormField>
+
+            <FormField label="Est. Parts Cost">
+              <Input type="number" value={form.partsCost} onChange={e => setF('partsCost', e.target.value)} placeholder="120.00" />
+            </FormField>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
+            <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+            <Button size="sm" onClick={save} disabled={saving || !form.description} className="bg-lime-600 hover:bg-lime-700 text-white">
+              <Save className="mr-1.5 h-4 w-4" /> Create Work Order
+            </Button>
           </div>
         </Card>
       )}
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
-              <th className="text-left p-3 font-medium">Work Order</th>
-              <th className="text-left p-3 font-medium">Customer</th>
-              <th className="text-left p-3 font-medium">Description</th>
-              <th className="text-center p-3 font-medium">Priority</th>
-              <th className="text-right p-3 font-medium">Cost</th>
-              <th className="text-right p-3 font-medium">Date</th>
-              <th className="text-center p-3 font-medium">Status</th>
-              <th className="text-right p-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {workOrders.map(w => (
-              <tr key={w.id} className="border-b hover:bg-muted/30 transition-colors">
-                <td className="p-3 font-mono font-medium">{w.workOrderNumber}</td>
-                <td className="p-3">{w.customerName || '—'}</td>
-                <td className="p-3 text-muted-foreground max-w-[240px] truncate">{w.description}</td>
-                <td className="p-3 text-center"><Badge variant={w.priority === 'High' || w.priority === 'Critical' ? 'destructive' : 'outline'}>{w.priority}</Badge></td>
-                <td className="p-3 text-right font-mono">{money(w.totalCost)}</td>
-                <td className="p-3 text-right">{w.scheduledDate}</td>
-                <td className="p-3 text-center"><StatusChip status={w.status} label={w.status} hex={woStatusHex[w.status] ?? '#94a3b8'} /></td>
-                <td className="p-3 text-right">
-                  {w.status === 'Open' && <Button size="sm" variant="ghost" onClick={() => setWorkOrderStatus(w.id, 'Assigned')}>Assign</Button>}
-                  {w.status === 'Assigned' && <Button size="sm" variant="ghost" onClick={() => setWorkOrderStatus(w.id, 'InProgress')}>Start</Button>}
-                  {w.status === 'InProgress' && <Button size="sm" variant="ghost" onClick={() => setWorkOrderStatus(w.id, 'Completed')}>Complete</Button>}
-                </td>
+      <Card className="overflow-hidden border border-[var(--color-border)] shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
+                <th className="text-left p-3.5 font-semibold w-[120px]">Work Order #</th>
+                <th className="text-left p-3.5 font-semibold min-w-[220px] w-[26%]">Customer / Client</th>
+                <th className="text-left p-3.5 font-semibold min-w-[200px]">Description & Scope</th>
+                <th className="text-center p-3.5 font-semibold w-[100px]">Priority</th>
+                <th className="text-right p-3.5 font-semibold min-w-[100px]">Est. Cost</th>
+                <th className="text-left p-3.5 font-semibold min-w-[180px] w-[18%]">Assigned Lead</th>
+                <th className="text-center p-3.5 font-semibold w-[110px]">Status</th>
+                <th className="text-right p-3.5 font-semibold w-[120px]">Actions</th>
               </tr>
-            ))}
-            {workOrders.length === 0 && <tr><td colSpan={8}><EmptyState icon={Wrench} title="No work orders found" hint="Create a field work order to assign and track jobs." /></td></tr>}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {workOrders.map(w => (
+                <tr key={w.id} className="border-b border-[var(--color-border-subtle)] hover:bg-muted/30 transition-colors">
+                  <td className="p-3.5 font-mono font-medium text-xs">{w.workOrderNumber}</td>
+                  <td className="p-3.5 min-w-[220px]">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                        {w.customerName?.[0] || 'C'}
+                      </div>
+                      <div>
+                        <p className="font-bold text-[var(--color-text-strong)]">{w.customerName || '—'}</p>
+                        <p className="text-xs text-[var(--color-text-muted)] font-medium text-amber-600 dark:text-amber-400 mt-0.5">{w.workType}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-3.5 min-w-[200px]">
+                    <p className="line-clamp-2 text-xs font-medium text-[var(--color-text)]">{w.description}</p>
+                    {w.location && <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">📍 {w.location}</p>}
+                  </td>
+                  <td className="p-3.5 text-center"><Badge variant={w.priority === 'High' || w.priority === 'Critical' ? 'destructive' : 'outline'}>{w.priority}</Badge></td>
+                  <td className="p-3.5 text-right font-mono font-bold">{money(w.totalCost)}</td>
+                  <td className="p-3.5 min-w-[180px]">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-blue-500/10 text-blue-600 font-bold text-[10px] flex items-center justify-center shrink-0">
+                        {empName(employees, w.assignedTo)?.[0] || 'U'}
+                      </div>
+                      <span className="font-medium text-xs text-[var(--color-text-strong)]">{empName(employees, w.assignedTo)}</span>
+                    </div>
+                  </td>
+                  <td className="p-3.5 text-center"><StatusChip status={w.status} label={w.status} hex={woStatusHex[w.status] ?? '#94a3b8'} /></td>
+                  <td className="p-3.5 text-right">
+                    {w.status === 'Open' && <Button size="sm" variant="outline" className="h-7 text-xs border-blue-500/30 text-blue-600 hover:bg-blue-50" onClick={() => setWorkOrderStatus(w.id, 'Assigned')}>Assign</Button>}
+                    {w.status === 'Assigned' && <Button size="sm" variant="outline" className="h-7 text-xs border-amber-500/30 text-amber-600 hover:bg-amber-50" onClick={() => setWorkOrderStatus(w.id, 'InProgress')}>Start</Button>}
+                    {w.status === 'InProgress' && <Button size="sm" variant="outline" className="h-7 text-xs border-emerald-500/30 text-emerald-600 hover:bg-emerald-50" onClick={() => setWorkOrderStatus(w.id, 'Completed')}>Complete</Button>}
+                  </td>
+                </tr>
+              ))}
+              {workOrders.length === 0 && <tr><td colSpan={8}><EmptyState icon={Wrench} title="No work orders found" hint="Create a field work order to assign and track jobs." /></td></tr>}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );
@@ -620,51 +885,103 @@ export function FieldExpensesView({ activeEntityId }: { activeEntityId?: string 
         <KpiCard icon={AlertTriangle} label="Pending" value={expenses.filter(e => !e.reimbursed).length} desc="Awaiting reimbursement" tone="amber" />
       </KpiGrid>
       {showForm && (
-        <Card className="p-4">
-          <div className="grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-2"><FormField label="Work Order"><Select value={form.workOrderId} onValueChange={v => v !== null && setF('workOrderId', v)}>
-              <SelectTrigger><SelectValue placeholder="Optional" /></SelectTrigger>
-              <SelectContent>{workOrders.map(w => <SelectItem key={w.id} value={w.id}>{w.workOrderNumber} · {w.workType}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-2"><FormField label="Category"><Select value={form.category} onValueChange={v => v !== null && setF('category', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-            </Select></FormField></div>
-            <div className="col-span-3"><FormField label="Description"><Input value={form.description} onChange={e => setF('description', e.target.value)} /></FormField></div>
-            <div className="col-span-1"><FormField label="Amount"><Input type="number" value={form.amount} onChange={e => setF('amount', e.target.value)} /></FormField></div>
-            <div className="col-span-2"><FormField label="Date"><Input type="date" value={form.expenseDate} onChange={e => setF('expenseDate', e.target.value)} /></FormField></div>
-            <div className="col-span-2"><Button onClick={save} disabled={saving || !form.description}><Save className="mr-1.5 h-4 w-4" />Log Expense</Button></div>
+        <Card className="p-5 border border-[var(--color-border)] shadow-md bg-[var(--color-surface)] rounded-xl space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
+            <h3 className="font-bold text-sm text-[var(--color-text-strong)] flex items-center gap-2">
+              <ReceiptText className="w-4 h-4 text-lime-600 dark:text-lime-400" /> Log Field Operation Expense
+            </h3>
+            <Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="md:col-span-2">
+              <FormField label="Linked Work Order (Optional)">
+                <Select value={form.workOrderId} onValueChange={v => v !== null && setF('workOrderId', v)}>
+                  <SelectTrigger><SelectValue placeholder="Select work order" /></SelectTrigger>
+                  <SelectContent>{workOrders.map(w => <SelectItem key={w.id} value={w.id}>{w.workOrderNumber} · {w.workType} ({w.customerName})</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+            </div>
+
+            <FormField label="Expense Category">
+              <Select value={form.category} onValueChange={v => v !== null && setF('category', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+
+            <FormField label="Amount">
+              <Input type="number" value={form.amount} onChange={e => setF('amount', e.target.value)} placeholder="0.00" />
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Description / Merchant / Purpose">
+                <Input value={form.description} onChange={e => setF('description', e.target.value)} placeholder="e.g. Fuel receipt for site dispatch to Apex Industrial" />
+              </FormField>
+            </div>
+
+            <FormField label="Expense Date">
+              <Input type="date" value={form.expenseDate} onChange={e => setF('expenseDate', e.target.value)} />
+            </FormField>
+
+            <FormField label="Reimbursement Status">
+              <Select value={form.reimbursed ? 'yes' : 'no'} onValueChange={v => setF('reimbursed', v === 'yes')}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="no">Pending Reimbursement</SelectItem>
+                  <SelectItem value="yes">Reimbursed</SelectItem>
+                </SelectContent>
+              </Select>
+            </FormField>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
+            <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+            <Button size="sm" onClick={save} disabled={saving || !form.description} className="bg-lime-600 hover:bg-lime-700 text-white">
+              <Save className="mr-1.5 h-4 w-4" /> Log Expense
+            </Button>
           </div>
         </Card>
       )}
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
-              <th className="text-left p-3 font-medium">Expense</th>
-              <th className="text-left p-3 font-medium">Work Order</th>
-              <th className="text-left p-3 font-medium">Category</th>
-              <th className="text-left p-3 font-medium">Description</th>
-              <th className="text-right p-3 font-medium">Date</th>
-              <th className="text-right p-3 font-medium">Amount</th>
-              <th className="text-center p-3 font-medium">Reimbursed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {expenses.map(e => (
-              <tr key={e.id} className="border-b hover:bg-muted/30 transition-colors">
-                <td className="p-3 font-mono font-medium">{e.expenseNumber}</td>
-                <td className="p-3">{getWo(e.workOrderId) ? `${getWo(e.workOrderId)!.workOrderNumber} · ${getWo(e.workOrderId)!.workType}` : '—'}</td>
-                <td className="p-3"><Badge variant="outline">{e.category}</Badge></td>
-                <td className="p-3 text-muted-foreground max-w-[240px] truncate">{e.description}</td>
-                <td className="p-3 text-right">{e.expenseDate}</td>
-                <td className="p-3 text-right font-mono font-medium">{money(e.amount)}</td>
-                <td className="p-3 text-center">{e.reimbursed ? <Badge variant="secondary">Yes</Badge> : <Badge variant="outline">No</Badge>}</td>
+      <Card className="overflow-hidden border border-[var(--color-border)] shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-lime-500/[0.05] dark:bg-lime-400/[0.07]">
+                <th className="text-left p-3.5 font-semibold w-[120px]">Expense #</th>
+                <th className="text-left p-3.5 font-semibold min-w-[200px] w-[24%]">Linked Work Order</th>
+                <th className="text-left p-3.5 font-semibold min-w-[120px]">Category</th>
+                <th className="text-left p-3.5 font-semibold min-w-[220px]">Description & Merchant</th>
+                <th className="text-left p-3.5 font-semibold min-w-[120px]">Date</th>
+                <th className="text-right p-3.5 font-semibold min-w-[100px]">Amount</th>
+                <th className="text-center p-3.5 font-semibold w-[120px]">Reimbursed</th>
               </tr>
-            ))}
-            {expenses.length === 0 && <tr><td colSpan={7}><EmptyState icon={ReceiptText} title="No field expenses found" hint="Log travel, supplies, and other reimbursable field costs." /></td></tr>}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {expenses.map(e => (
+                <tr key={e.id} className="border-b border-[var(--color-border-subtle)] hover:bg-muted/30 transition-colors">
+                  <td className="p-3.5 font-mono font-medium text-xs">{e.expenseNumber}</td>
+                  <td className="p-3.5 min-w-[200px]">
+                    {getWo(e.workOrderId) ? (
+                      <div>
+                        <p className="font-bold text-[var(--color-text-strong)]">{getWo(e.workOrderId)!.workOrderNumber}</p>
+                        <p className="text-xs text-[var(--color-text-muted)]">{getWo(e.workOrderId)!.workType} · {getWo(e.workOrderId)!.customerName}</p>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-[var(--color-text-muted)]">General Field Cost</span>
+                    )}
+                  </td>
+                  <td className="p-3.5"><Badge variant="outline">{e.category}</Badge></td>
+                  <td className="p-3.5 text-xs text-[var(--color-text-strong)] font-medium min-w-[220px]">{e.description}</td>
+                  <td className="p-3.5 text-xs text-[var(--color-text-muted)]">{e.expenseDate}</td>
+                  <td className="p-3.5 text-right font-mono font-bold">{money(e.amount)}</td>
+                  <td className="p-3.5 text-center">{e.reimbursed ? <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Reimbursed</Badge> : <Badge variant="outline" className="text-amber-600 border-amber-500/30">Pending</Badge>}</td>
+                </tr>
+              ))}
+              {expenses.length === 0 && <tr><td colSpan={7}><EmptyState icon={ReceiptText} title="No field expenses found" hint="Log travel, supplies, and other reimbursable field costs." /></td></tr>}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   );

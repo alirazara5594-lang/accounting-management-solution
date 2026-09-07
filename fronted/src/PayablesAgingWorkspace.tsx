@@ -7,6 +7,7 @@ import {
   CalendarCheck, Hourglass, History, AlertTriangle, ShieldAlert, Wallet
 } from 'lucide-react';
 import { money } from './lib/currency';
+import { formatBillNumber } from './lib/invoiceNumbering';
 import { downloadExcel, downloadCSV } from './lib/exportUtils';
 import ExportDropdown from './components/ExportDropdown';
 import { KpiCard, KpiGrid } from './components/ui/kpi-card';
@@ -93,10 +94,13 @@ export function PayablesAgingWorkspace({ activeEntityId }: PayablesAgingProps) {
     const asOfTime = new Date(asOfDate).getTime();
 
     return vendors.map((v) => {
-      // Filter open bills for this vendor
+      // Filter open posted bills for this vendor (exclude Draft 0 and Void)
       const vendorBills = bills.filter(
         (b: any) =>
           b.vendorId === v.id &&
+          b.status !== 0 &&
+          b.status !== '0' &&
+          String(b.status).toLowerCase() !== 'draft' &&
           (b.amountDue == null || b.amountDue > 0.01) &&
           String(b.status).toLowerCase() !== 'void' &&
           String(b.status).toLowerCase() !== 'cancelled'
@@ -217,12 +221,15 @@ export function PayablesAgingWorkspace({ activeEntityId }: PayablesAgingProps) {
     const vendorBills = bills.filter(
       (b: any) =>
         b.vendorId === selectedVendorId &&
+        b.status !== 0 &&
+        b.status !== '0' &&
+        String(b.status).toLowerCase() !== 'draft' &&
         (b.amountDue == null || b.amountDue > 0.01) &&
         String(b.status).toLowerCase() !== 'void' &&
         String(b.status).toLowerCase() !== 'cancelled'
     );
 
-    const billDetails: OpenBillDetail[] = vendorBills.map((b: any) => {
+    const billDetails: OpenBillDetail[] = (vendorBills || []).map((b: any, idx: number) => {
       const dueStr = b.dueDate || b.date || asOfDate;
       const dueTime = new Date(dueStr).getTime();
       const diffDays = Math.floor((asOfTime - dueTime) / 86400000);
@@ -235,9 +242,11 @@ export function PayablesAgingWorkspace({ activeEntityId }: PayablesAgingProps) {
       else if (diffDays <= 90) bucket = '61-90 Days';
       else bucket = '90+ Days';
 
+      const cleanBillNum = formatBillNumber(b.billNumber || b.reference, idx + 1);
+
       return {
         id: b.id || b.billNumber,
-        billNumber: b.billNumber || 'BILL',
+        billNumber: cleanBillNum,
         date: (b.date || b.billDate || '').slice(0, 10),
         dueDate: (b.dueDate || '').slice(0, 10),
         daysOverdue: Math.max(0, diffDays),

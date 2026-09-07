@@ -9,7 +9,7 @@ namespace Zenabook.Api.Controllers;
 public class GoodsReceiptsController(AccountingStore store) : ControllerBase
 {
     [HttpGet]
-    public IActionResult GetAll() => Ok(store.GoodsReceiptNotes);
+    public IActionResult GetAll() => Ok(store.GoodsReceiptNotes.OrderByDescending(g => g.DateReceived).ThenByDescending(g => g.GrnNumber));
 
     [HttpGet("{id:guid}")]
     public IActionResult Get(Guid id) => store.FindGoodsReceiptNote(id) switch

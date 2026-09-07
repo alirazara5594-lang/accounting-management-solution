@@ -14,6 +14,7 @@ public class VendorPaymentsController(AccountingStore store) : ControllerBase
         var query = store.VendorPayments
             .Where(p => companyId == null || p.CompanyId == companyId)
             .OrderByDescending(p => p.PaymentDate)
+            .ThenByDescending(p => p.PaymentNumber)
             .Select(p => new
             {
                 p.Id,
@@ -96,5 +97,13 @@ public class VendorPaymentsController(AccountingStore store) : ControllerBase
         if (!store.CreateVendorPayment(request, out var payment, out var error))
             return BadRequest(new { Error = error });
         return Created($"/api/v1/vendor-payments/{payment!.Id}", payment);
+    }
+
+    [HttpPost("{id}/void")]
+    public IActionResult VoidPayment(Guid id)
+    {
+        if (store.VoidVendorPayment(id, out var error))
+            return Ok(new { message = "Vendor payment voided and ledger reversal posted." });
+        return BadRequest(new { Error = error });
     }
 }

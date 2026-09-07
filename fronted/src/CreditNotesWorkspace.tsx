@@ -12,6 +12,7 @@ import { KpiCard, KpiGrid } from './components/ui/kpi-card'
 import { StatusChip } from './components/ui/status-chip'
 import { EmptyState } from './components/ui/empty-state'
 import { money } from '@/lib/currency'
+import { CompactSelect } from './components/CompactSelect'
 
 const statusStyles: Record<string, { label: string; hex: string }> = {
   Draft: { label: 'Draft', hex: '#94a3b8' },
@@ -110,17 +111,28 @@ export function CreditNotesWorkspace({
   const formatDate = (dateStr: string) => (dateStr ? new Date(dateStr).toLocaleDateString() : '—')
 
   const filtered = useMemo(() => {
-    return creditNotes.filter((cn: any) => {
-      const cust = customers.find(c => c.id === cn.customerId)
-      const custName = cust?.name || cn.customerId || ''
-      const matchesQuery = !query.trim()
-        ? true
-        : `${custName} ${cn.notes || ''} ${cn.status || ''}`.toLowerCase().includes(query.toLowerCase())
+    return creditNotes
+      .filter((cn: any) => {
+        const cust = customers.find(c => c.id === cn.customerId)
+        const custName = cust?.name || cn.customerId || ''
+        const matchesQuery = !query.trim()
+          ? true
+          : `${cn.creditNoteNumber || ''} ${custName} ${cn.notes || ''} ${cn.status || ''}`.toLowerCase().includes(query.toLowerCase())
 
-      const matchesStatus = statusFilter === 'all' || (cn.status || '').toLowerCase() === statusFilter.toLowerCase()
+        const matchesStatus = statusFilter === 'all' || (cn.status || '').toLowerCase() === statusFilter.toLowerCase()
 
-      return matchesQuery && matchesStatus
-    })
+        return matchesQuery && matchesStatus
+      })
+      .sort((a: any, b: any) => {
+        const dateA = a.creditNoteDate || a.createdAt || ''
+        const dateB = b.creditNoteDate || b.createdAt || ''
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA)
+        }
+        const numA = a.creditNoteNumber || a.reference || ''
+        const numB = b.creditNoteNumber || b.reference || ''
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' })
+      })
   }, [creditNotes, customers, query, statusFilter])
 
   const exportHeaders = ['Date', 'Customer', 'Reason', 'Amount', 'Status']
@@ -383,18 +395,18 @@ export function CreditNotesWorkspace({
                     <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
                       <span className="text-rose-500 font-bold mr-1">*</span> Customer / Client
                     </label>
-                    <select
+                    <CompactSelect
                       value={form.customerId}
-                      onChange={e => setForm({ ...form, customerId: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      <option value="">Select customer...</option>
-                      {customers.map((c: any) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} {c.customerNumber ? `(${c.customerNumber})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={v => setForm({ ...form, customerId: v })}
+                      placeholder="Select customer..."
+                      searchPlaceholder="Search customer by name or code..."
+                      options={customers.map((c: any) => ({
+                        value: c.id,
+                        label: c.name,
+                        badge: c.customerNumber || undefined,
+                      }))}
+                      className="h-10 text-xs font-semibold"
+                    />
                   </div>
 
                   <div>
@@ -565,15 +577,6 @@ export function CreditNotesWorkspace({
                 >
                   Cancel
                 </button>
-                {modalTab !== 'preview' && (
-                  <button
-                    type="button"
-                    className="h-9 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium hover:bg-[var(--color-surface-muted)] transition-colors"
-                    onClick={(e) => { e.preventDefault(); saveDraft(); notify('Credit note draft saved locally.'); }}
-                  >
-                    Save Draft
-                  </button>
-                )}
 
                 {modalTab !== 'details' && (
                   <button

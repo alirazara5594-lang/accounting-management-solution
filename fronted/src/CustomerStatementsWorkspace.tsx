@@ -10,6 +10,7 @@ import {
   RefreshCw, FileCheck, FileText, CreditCard, AlertTriangle
 } from 'lucide-react';
 import { money } from './lib/currency';
+import { formatInvoiceNumber } from './lib/invoiceNumbering';
 import { downloadExcel, downloadCSV } from './lib/exportUtils';
 import ExportDropdown from './components/ExportDropdown';
 import { KpiCard, KpiGrid } from './components/ui/kpi-card';
@@ -125,7 +126,13 @@ export function CustomerStatementsWorkspace({ activeEntityId }: Props) {
   ) => {
     const customer = customers.find((c) => c.id === customerId);
     const customerInvoices = invoices.filter(
-      (i: any) => i.customerId === customerId && String(i.status).toLowerCase() !== 'void' && i.status !== 3
+      (i: any) =>
+        i.customerId === customerId &&
+        i.status !== 0 &&
+        i.status !== '0' &&
+        String(i.status).toLowerCase() !== 'draft' &&
+        String(i.status).toLowerCase() !== 'void' &&
+        i.status !== 3
     );
     const customerPayments = payments.filter(
       (p: any) => p.customerId === customerId
@@ -172,21 +179,22 @@ export function CustomerStatementsWorkspace({ activeEntityId }: Props) {
       status: string;
     }[] = [];
 
-    customerInvoices.forEach((inv: any) => {
+    customerInvoices.forEach((inv: any, idx: number) => {
       const d = (inv.invoiceDate || inv.date || '').slice(0, 10);
       if ((!fromStr || d >= fromStr) && (!toStr || d <= toStr)) {
         const st = typeof inv.status === 'number'
           ? ['Draft', 'Sent', 'Paid', 'Void', 'Partly Paid', 'Overdue'][inv.status] || 'Active'
           : String(inv.status || 'Active');
+        const cleanInvNum = formatInvoiceNumber(inv.invoiceNumber || inv.reference, idx + 1);
         rawLines.push({
           id: inv.id || inv.invoiceNumber,
           date: d,
           type: 'Invoice',
           typeLabel: 'Sales Invoice',
-          reference: inv.reference || '',
-          docNumber: inv.invoiceNumber || 'INV',
+          reference: cleanInvNum,
+          docNumber: cleanInvNum,
           dueDate: (inv.dueDate || '').slice(0, 10),
-          description: inv.notes || `Sales Invoice #${inv.invoiceNumber}`,
+          description: inv.notes || `Sales Invoice #${cleanInvNum}`,
           debit: inv.totalAmount || 0,
           credit: 0,
           status: st,

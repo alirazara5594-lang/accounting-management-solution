@@ -64,9 +64,17 @@ export function getLicenseInfo(): LicenseInfo {
     }
 
     const preset = LICENSE_PRESETS[mode];
-    const startTime = new Date(startDateStr).getTime();
-    const now = Date.now();
-    const elapsedDays = Math.max(0, Math.floor((now - startTime) / (1000 * 60 * 60 * 24)));
+    const startDate = new Date(startDateStr);
+    const now = new Date();
+
+    // Calculate calendar-based days passed (Day 1 = 90d, Day 2 = 89d, etc.)
+    const startUtc = Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    const nowUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const calendarDaysPassed = Math.floor((nowUtc - startUtc) / (1000 * 60 * 60 * 24));
+    
+    // Also consider exact 24h intervals if time elapsed is greater
+    const exactHoursPassed = (now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+    const elapsedDays = Math.max(0, Math.max(calendarDaysPassed, Math.floor(exactHoursPassed)));
 
     if (mode === 'licensed') {
       const savedKey = localStorage.getItem(STORAGE_KEYS.KEY) || 'AMS-PRO-8894-ENTERPRISE';
@@ -91,7 +99,7 @@ export function getLicenseInfo(): LicenseInfo {
     const daysRemaining = Math.max(0, totalDays - elapsedDays);
     const isExpired = daysRemaining <= 0;
     const progressPercent = Math.min(100, Math.round((elapsedDays / totalDays) * 100));
-    const expiryDate = new Date(startTime + totalDays * 86400000).toISOString();
+    const expiryDate = new Date(startDate.getTime() + totalDays * 86400000).toISOString();
 
     let badgeLabel = `${totalDays}-Day Trial · ${daysRemaining}d left`;
     if (mode === 'beta-365') {

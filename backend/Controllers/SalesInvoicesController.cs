@@ -13,12 +13,13 @@ public class SalesInvoicesController : ControllerBase
     public IActionResult GetAll([FromQuery] Guid? companyId)
     {
         var invoices = _store.SalesInvoices
-            .Where(i => companyId == null || i.CompanyId == companyId)
+            .Where(i => companyId == null || i.CompanyId == null || i.CompanyId == companyId)
             .OrderByDescending(i => i.InvoiceDate)
+            .ThenByDescending(i => i.InvoiceNumber)
             .Select(i => new {
                 i.Id, i.InvoiceNumber, i.CustomerId,
                 CustomerName = _store.Customers.FirstOrDefault(c => c.Id == i.CustomerId)?.Name ?? "Unknown",
-                i.InvoiceDate, i.DueDate, i.Status, i.SubTotal, i.DiscountTotal, i.TaxTotal, i.TotalAmount, i.AmountDue, i.Reference
+                i.InvoiceDate, i.DueDate, i.Status, i.SubTotal, i.DiscountTotal, i.TaxTotal, i.TotalAmount, i.AmountDue, i.Reference, i.Lines
             });
         return Ok(invoices);
     }

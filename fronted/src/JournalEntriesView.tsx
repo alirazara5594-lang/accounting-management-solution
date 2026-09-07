@@ -13,6 +13,7 @@ import { downloadExcel, downloadCSV } from './lib/exportUtils';
 import { KpiCard, KpiGrid } from './components/ui/kpi-card';
 import { StatusChip } from './components/ui/status-chip';
 import { EmptyState } from './components/ui/empty-state';
+import { CompactSelect } from './components/CompactSelect';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -44,6 +45,23 @@ const statusStyles: Record<string, { label: string; hex: string }> = {
   Posted: { label: 'Posted', hex: '#10b981' }
 };
 
+// Generates clean sequential Journal Entry references starting with JE-00001
+const getNextJournalReference = (allEntries: JournalEntry[] = []): string => {
+  let maxSeq = 0;
+  for (const e of allEntries) {
+    if (!e?.reference) continue;
+    const ref = e.reference.trim();
+    const match = ref.match(/^JE-(?:\d{4}-)?(\d+)$/i) || ref.match(/JE-(\d+)/i);
+    if (match) {
+      const numPart = parseInt(match[1], 10);
+      if (!isNaN(numPart) && numPart > maxSeq && numPart < 1000000) {
+        maxSeq = numPart;
+      }
+    }
+  }
+  return `JE-${String(maxSeq + 1).padStart(5, '0')}`;
+};
+
 export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts, initialEntries, onEntriesChange }) => {
   const [entries, setEntries] = useState<JournalEntry[]>(initialEntries);
   const [loading, setLoading] = useState(false);
@@ -60,7 +78,7 @@ export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts
   // Journal Entry Form State
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
-    reference: `JE-${new Date().getFullYear()}-${String(Math.floor(1000 + Math.random() * 9000))}`,
+    reference: getNextJournalReference(initialEntries),
     description: '',
     currency: 'PKR',
     lines: [
@@ -113,9 +131,10 @@ export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts
       }
     } catch {}
 
+    const defaultDate = new Date().toISOString().slice(0, 10);
     setForm({
-      date: new Date().toISOString().slice(0, 10),
-      reference: `JE-${new Date().getFullYear()}-${String(Math.floor(1000 + Math.random() * 9000))}`,
+      date: defaultDate,
+      reference: getNextJournalReference(entries),
       description: '',
       currency: 'PKR',
       lines: [
@@ -126,12 +145,19 @@ export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts
     setIsModalOpen(true);
   };
 
+  useEffect(() => {
+    const handleOpen = () => openNewEntryModal();
+    window.addEventListener('open-new-journal-entry', handleOpen);
+    return () => window.removeEventListener('open-new-journal-entry', handleOpen);
+  }, [entries, accounts]);
+
   const handleDiscardDraft = () => {
     localStorage.removeItem('ams_journal_draft');
     setDraftRestored(false);
+    const defaultDate = new Date().toISOString().slice(0, 10);
     setForm({
-      date: new Date().toISOString().slice(0, 10),
-      reference: `JE-${new Date().getFullYear()}-${String(Math.floor(1000 + Math.random() * 9000))}`,
+      date: defaultDate,
+      reference: getNextJournalReference(entries),
       description: '',
       currency: 'PKR',
       lines: [
@@ -294,28 +320,39 @@ export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts
   }, 0);
 
   const filteredEntries = useMemo(() => {
-    return entries.filter((e) => {
-      if (statusFilter !== 'All') {
-        const s = e.status || 'Draft';
-        if (s !== statusFilter) return false;
-      }
-      if (query.trim()) {
-        const q = query.toLowerCase();
-        const matchesRef = (e.reference || '').toLowerCase().includes(q);
-        const matchesDesc = (e.description || '').toLowerCase().includes(q);
-        const matchesStatus = (e.status || '').toLowerCase().includes(q);
-        const matchesLines = (e.lines || []).some((l) => {
-          const acc = accounts.find((a) => a.id === l.accountId);
-          return (
-            (acc?.code || '').toLowerCase().includes(q) ||
-            (acc?.name || '').toLowerCase().includes(q) ||
-            (l.memo || '').toLowerCase().includes(q)
-          );
-        });
-        if (!matchesRef && !matchesDesc && !matchesStatus && !matchesLines) return false;
-      }
-      return true;
-    });
+    return entries
+      .filter((e) => {
+        if (statusFilter !== 'All') {
+          const s = e.status || 'Draft';
+          if (s !== statusFilter) return false;
+        }
+        if (query.trim()) {
+          const q = query.toLowerCase();
+          const matchesRef = (e.reference || '').toLowerCase().includes(q);
+          const matchesDesc = (e.description || '').toLowerCase().includes(q);
+          const matchesStatus = (e.status || '').toLowerCase().includes(q);
+          const matchesLines = (e.lines || []).some((l) => {
+            const acc = accounts.find((a) => a.id === l.accountId);
+            return (
+              (acc?.code || '').toLowerCase().includes(q) ||
+              (acc?.name || '').toLowerCase().includes(q) ||
+              (l.memo || '').toLowerCase().includes(q)
+            );
+          });
+          if (!matchesRef && !matchesDesc && !matchesStatus && !matchesLines) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const dateA = a.date || a.createdAt || '';
+        const dateB = b.date || b.createdAt || '';
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA);
+        }
+        const numA = (a as any).entryNumber || a.reference || '';
+        const numB = (b as any).entryNumber || b.reference || '';
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' });
+      });
   }, [entries, statusFilter, query, accounts]);
 
   // ─── Branded Official IAS 1 Journal Voucher PDF Generator ───────────────────
@@ -475,6 +512,7 @@ export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
+            id="journal-form"
             onClick={openNewEntryModal}
             className="inline-flex items-center gap-1.5 h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
           >
@@ -626,17 +664,65 @@ export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts
                 filteredEntries.map((entry) => {
                   const debitTotal = (entry.lines || []).reduce((s, l) => s + (l.debit || 0), 0);
                   const status = entry.status || 'Draft';
+                  const isRev = entry.reference?.startsWith('REV-');
+                  const hasReversal = !isRev && entries.some(e => e.reference === `REV-${entry.reference}`);
+                  const originalRef = isRev && entry.reference ? entry.reference.replace('REV-', '') : null;
 
                   return (
-                    <tr key={entry.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-900/30 transition-colors">
+                    <tr 
+                      key={entry.id} 
+                      className={`transition-colors ${
+                        isRev 
+                          ? 'bg-rose-500/[0.03] dark:bg-rose-500/[0.06] hover:bg-rose-500/[0.08]' 
+                          : hasReversal 
+                          ? 'bg-amber-500/[0.03] dark:bg-amber-500/[0.06] hover:bg-amber-500/[0.08]' 
+                          : 'hover:bg-gray-50/50 dark:hover:bg-gray-900/30'
+                      }`}
+                    >
                       <td className="py-3 px-4 font-mono font-semibold text-[var(--color-text)]">
                         {entry.date?.slice(0, 10)}
                       </td>
-                      <td className="py-3 px-4 font-mono font-bold text-blue-600 dark:text-blue-400">
-                        {entry.reference}
+                      <td className="py-3 px-4">
+                        {isRev ? (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 text-[9px] font-black tracking-wider uppercase">
+                                REVERSAL
+                              </span>
+                              <span className="font-mono font-bold text-rose-600 dark:text-rose-400 text-xs">
+                                {entry.reference}
+                              </span>
+                            </div>
+                            {originalRef && (
+                              <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
+                                Reverses: <strong className="text-[var(--color-text-strong)]">{originalRef}</strong>
+                              </span>
+                            )}
+                          </div>
+                        ) : hasReversal ? (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[9px] font-black tracking-wider uppercase">
+                                CANCELLED
+                              </span>
+                              <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-xs">
+                                {entry.reference}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                              Reversed by REV-{entry.reference}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-xs">
+                            {entry.reference}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4 font-medium text-[var(--color-text-strong)] max-w-xs truncate">
-                        {entry.description}
+                        <div className={isRev ? 'text-rose-700 dark:text-rose-300 font-medium' : ''}>
+                          {entry.description}
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-center font-mono">
                         <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-md font-bold text-[10px]">
@@ -788,7 +874,7 @@ export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts
                     type="text"
                     value={form.reference}
                     onChange={(e) => setForm({ ...form, reference: e.target.value })}
-                    placeholder="e.g. JE-2026-0001"
+                    placeholder="e.g. JE-00001"
                     className="w-full h-9 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] font-mono font-bold outline-none focus:border-emerald-500 shadow-2xs"
                     required
                   />
@@ -885,19 +971,18 @@ export const JournalEntriesView: React.FC<JournalEntriesViewProps> = ({ accounts
                             {idx + 1}
                           </td>
                           <td className="py-2 px-3">
-                            <select
+                            <CompactSelect
                               value={line.accountId}
-                              onChange={(e) => updateLine(idx, 'accountId', e.target.value)}
-                              className="w-full h-8 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] outline-none focus:border-emerald-500 font-medium"
-                              required
-                            >
-                              <option value="">-- Select Chart of Account --</option>
-                              {accounts.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                  {a.code} — {a.name} ({a.type})
-                                </option>
-                              ))}
-                            </select>
+                              onChange={v => updateLine(idx, 'accountId', v)}
+                              placeholder="-- Select Chart of Account --"
+                              searchPlaceholder="Search account code or title..."
+                              options={accounts.map((a) => ({
+                                value: a.id,
+                                label: `${a.code} — ${a.name}`,
+                                badge: String(a.type)
+                              }))}
+                              className="h-8 text-xs font-medium"
+                            />
                           </td>
                           <td className="py-2 px-3">
                             <input

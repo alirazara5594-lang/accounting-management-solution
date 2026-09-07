@@ -222,6 +222,7 @@ public record CustomerStatusRequest(CustomerStatus Status, string? Reason);
 
 public enum ProductType { Physical, Service, NonInventory, Bundle }
 public enum ProductStatus { Active, Inactive, Discontinued }
+public enum ProductPurpose { FinishedGood, RawMaterial, Component, FixedAsset, Consumable }
 
 public class Product
 {
@@ -230,9 +231,11 @@ public class Product
     public required string Name { get; set; }
     public string? Description { get; set; }
     public ProductType Type { get; set; } = ProductType.Physical;
+    public ProductPurpose Purpose { get; set; } = ProductPurpose.FinishedGood;
     public string? Category { get; set; }
     public string Unit { get; set; } = "Each";
     public decimal QuantityOnHand { get; set; } = 0m;
+    public decimal MinimumQuantity { get; set; } = 0m;
     public decimal UnitPrice { get; set; } = 0m;
     public decimal CostPrice { get; set; } = 0m;
     public Guid? TaxCodeId { get; set; }
@@ -251,16 +254,19 @@ public record ProductRequest(
     string Name,
     string? Description,
     ProductType Type,
+    ProductPurpose Purpose,
     string? Category,
     string Unit,
     decimal UnitPrice,
     decimal CostPrice,
+    decimal MinimumQuantity,
     Guid? TaxCodeId,
     Guid? IncomeAccountId,
     Guid? ExpenseAccountId,
     Guid? AssetAccountId);
 
 public record ProductStatusRequest(ProductStatus Status, string? Reason);
+public record ProductPurposeRequest(ProductPurpose Purpose);
 
 public enum VendorStatus { Active, Inactive, Blocked }
 
@@ -315,7 +321,7 @@ public class PurchaseRequestLine
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public Guid? ProductId { get; set; }
-    public required string Description { get; set; }
+    public string Description { get; set; } = string.Empty;
     public decimal Quantity { get; set; } = 1;
     public decimal EstimatedUnitPrice { get; set; } = 0;
     public decimal EstimatedTotal => Quantity * EstimatedUnitPrice;
@@ -327,11 +333,13 @@ public class PurchaseRequestLine
 public class PurchaseRequest
 {
     public Guid Id { get; init; } = Guid.NewGuid();
-    public required string RequestNumber { get; set; }
-    public required string RequesterName { get; set; }
+    public string RequestNumber { get; set; } = string.Empty;
+    private string _requesterName = "Procurement Admin";
+    public string RequesterName { get => _requesterName; set => _requesterName = value; }
+    public string? RequestorName { get => _requesterName; set => _requesterName = value ?? _requesterName; }
     public string Department { get; set; } = "General";
     public string Priority { get; set; } = "Medium";
-    public DateOnly Date { get; set; }
+    public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today);
     public DateOnly? RequiredByDate { get; set; }
     public PurchaseRequestStatus Status { get; set; } = PurchaseRequestStatus.Draft;
     public decimal TotalEstimatedAmount => Lines.Sum(l => l.EstimatedTotal);
@@ -345,7 +353,7 @@ public class RequestForQuotationLine
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public Guid? ProductId { get; set; }
-    public required string Description { get; set; }
+    public string Description { get; set; } = string.Empty;
     public decimal Quantity { get; set; } = 1;
     public LineDestination Destination { get; set; } = LineDestination.Inventory;
 }
@@ -353,11 +361,11 @@ public class RequestForQuotationLine
 public class RequestForQuotation
 {
     public Guid Id { get; init; } = Guid.NewGuid();
-    public required string RfqNumber { get; set; }
+    public string RfqNumber { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public Guid? PurchaseRequestId { get; set; }
-    public DateOnly Date { get; set; }
-    public DateOnly Deadline { get; set; }
+    public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    public DateOnly Deadline { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(7));
     public RfqStatus Status { get; set; } = RfqStatus.Open;
     public List<RequestForQuotationLine> Lines { get; set; } = [];
     public Guid CompanyId { get; set; }
@@ -422,6 +430,7 @@ public class VendorBill
     public List<VendorBillLine> Lines { get; set; } = [];
     public Guid CompanyId { get; set; }
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public bool HasVarianceWarning { get; set; } = false;
     public int PaymentTermsDays { get; set; } = 30;
     public string CurrencyCode { get; set; } = "USD";

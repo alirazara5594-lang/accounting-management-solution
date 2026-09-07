@@ -43,6 +43,7 @@ export interface BomLine {
   isOptional: boolean;
   substituteProductId?: string;
   substituteProduct?: Product;
+  quantityRequired?: number;
   notes?: string;
 }
 
@@ -55,6 +56,7 @@ export interface Bom {
   finishedProductCode: string;
   finishedProductName: string;
   quantityPerBatch: number;
+  quantityProduced?: number;
   unitOfMeasure: string;
   status: 'Draft' | 'Approved' | 'Active' | 'Obsolete' | 'Archived';
   type: 'Standard' | 'Phantom' | 'Planning' | 'Engineering' | 'Service';
@@ -238,6 +240,22 @@ export interface WorkOrder {
   varianceLabor: number;
   varianceOverhead: number;
   totalVariance: number;
+  finishedProductName?: string;
+  workCenterName?: string;
+  machineAssetName?: string;
+  quantityToProduce?: number;
+  directLaborCost?: number;
+  overheadCost?: number;
+  totalCost?: number;
+  unitCost?: number;
+  machineRunHours?: number;
+  machineHourlyRate?: number;
+  laborHours?: number;
+  laborHourlyRate?: number;
+  acceptedQuantity?: number;
+  inspectorName?: string;
+  scrapQuantity?: number;
+  scrapReason?: string;
   lines: WorkOrderLine[];
   operations: WorkOrderOperation[];
   qcRequired: boolean;
@@ -361,7 +379,7 @@ export interface QcInspection {
   inspectionType: 'FirstArticle' | 'InProcess' | 'Final' | 'Receiving' | 'Shipping';
   inspectionDate: string;
   inspectorId: string;
-  inspectorName: string.
+  inspectorName: string;
   quantityInspected: number;
   quantityPassed: number;
   quantityFailed: number;
@@ -371,7 +389,7 @@ export interface QcInspection {
   status: 'Pending' | 'InProgress' | 'Passed' | 'Failed' | 'ConditionalPass';
   disposition: 'Accept' | 'Reject' | 'Rework' | 'Scrap' | 'ReturnToVendor' | 'UseAsIs';
   defectNotes?: string;
-  correctiveAction?: string.
+  correctiveAction?: string;
   specifications?: QcSpecification[];
   measurements?: QcMeasurement[];
   companyId: string;
@@ -390,219 +408,219 @@ export interface QcSpecification {
 export interface QcMeasurement {
   id: string;
   specificationId: string;
-  specification?: QcSpecification.
-  sampleNumber: number.
-  measuredValue: number.
-  passed: boolean.
-  notes?: string.
+  specification?: QcSpecification;
+  sampleNumber: number;
+  measuredValue: number;
+  passed: boolean;
+  notes?: string;
 }
 
 export interface WorkOrderCompletion {
   id: string;
-  completionNumber: string.
-  workOrderId: string.
-  workOrder?: WorkOrder.
-  workOrderNumber: string.
-  completionDate: string.
-  quantityCompleted: number.
-  quantityScrapped: number.
-  quantityRework: number.
-  finishedGoodsWarehouseId: string.
-  finishedGoodsWarehouse?: Warehouse.
-  binLocation?: string.
-  lotNumber?: string.
-  serialNumbers?: string[].
-  totalMaterialCost: number.
-  totalLaborCost: number.
-  totalMachineCost: number.
-  totalOverheadCost: number.
-  totalActualCost: number.
-  standardCost: number.
-  variance: number.
-  status: 'Draft' | 'Posted' | 'Reversed'.
-  postedBy?: string.
-  postedDate?: string.
-  glJournalId?: string.
-  notes?: string.
-  companyId: string.
+  completionNumber: string;
+  workOrderId: string;
+  workOrder?: WorkOrder;
+  workOrderNumber: string;
+  completionDate: string;
+  quantityCompleted: number;
+  quantityScrapped: number;
+  quantityRework: number;
+  finishedGoodsWarehouseId: string;
+  finishedGoodsWarehouse?: Warehouse;
+  binLocation?: string;
+  lotNumber?: string;
+  serialNumbers?: string[];
+  totalMaterialCost: number;
+  totalLaborCost: number;
+  totalMachineCost: number;
+  totalOverheadCost: number;
+  totalActualCost: number;
+  standardCost: number;
+  variance: number;
+  status: 'Draft' | 'Posted' | 'Reversed';
+  postedBy?: string;
+  postedDate?: string;
+  glJournalId?: string;
+  notes?: string;
+  companyId: string;
 }
 
 export interface JobCosting {
-  workOrderId: string.
-  workOrderNumber: string.
-  productName: string.
-  quantityProduced: number.
+  workOrderId: string;
+  workOrderNumber: string;
+  productName: string;
+  quantityProduced: number;
   standardCosts: {
-    material: number.
-    labor: number.
-    machine: number.
-    overhead: number.
-    total: number.
-    perUnit: number.
-  }.
+    material: number;
+    labor: number;
+    machine: number;
+    overhead: number;
+    total: number;
+    perUnit: number;
+  };
   actualCosts: {
-    material: number.
-    labor: number.
-    machine: number.
-    overhead: number.
-    total: number.
-    perUnit: number.
-  }.
+    material: number;
+    labor: number;
+    machine: number;
+    overhead: number;
+    total: number;
+    perUnit: number;
+  };
   variances: {
-    material: { price: number; usage: number; total: number; }.
-    labor: { rate: number; efficiency: number; total: number; }.
-    overhead: { spending: number; volume: number; total: number; }.
-    total: number.
-  }.
+    material: { price: number; usage: number; total: number };
+    labor: { rate: number; efficiency: number; total: number };
+    overhead: { spending: number; volume: number; total: number };
+    total: number;
+  };
   wipValuation: {
-    openingWip: number.
-    currentPeriodCosts: number.
-    completedGoods: number.
-    closingWip: number.
-  }.
+    openingWip: number;
+    currentPeriodCosts: number;
+    completedGoods: number;
+    closingWip: number;
+  };
   absorption: {
-    laborHoursAbsorbed: number.
-    machineHoursAbsorbed: number.
-    overheadAbsorbed: number.
-    overheadRatePerLaborHour: number.
-    overheadRatePerMachineHour: number.
-  }.
+    laborHoursAbsorbed: number;
+    machineHoursAbsorbed: number;
+    overheadAbsorbed: number;
+    overheadRatePerLaborHour: number;
+    overheadRatePerMachineHour: number;
+  };
 }
 
 export interface ProductionSchedule {
-  id: string.
-  workOrderId: string.
-  workOrder?: WorkOrder.
-  workOrderNumber: string.
-  productName: string.
-  operationId: string.
-  operation?: WorkOrderOperation.
-  operationName: string.
-  workCenterId: string.
-  workCenter?: WorkCenter.
-  workCenterName: string.
-  plannedStart: string.
-  plannedEnd: string.
-  actualStart?: string.
-  actualEnd?: string.
-  status: 'Scheduled' | 'Dispatched' | 'InProgress' | 'Completed' | 'Delayed'.
-  priority: number.
-  constraints: string[].
+  id: string;
+  workOrderId: string;
+  workOrder?: WorkOrder;
+  workOrderNumber: string;
+  productName: string;
+  operationId: string;
+  operation?: WorkOrderOperation;
+  operationName: string;
+  workCenterId: string;
+  workCenter?: WorkCenter;
+  workCenterName: string;
+  plannedStart: string;
+  plannedEnd: string;
+  actualStart?: string;
+  actualEnd?: string;
+  status: 'Scheduled' | 'Dispatched' | 'InProgress' | 'Completed' | 'Delayed';
+  priority: number;
+  constraints: string[];
 }
 
 export interface SubcontractOrder {
-  id: string.
-  orderNumber: string.
-  workOrderId: string.
-  workOrder?: WorkOrder.
-  workOrderNumber: string.
-  operationId: string.
-  operation?: WorkOrderOperation.
-  operationName: string.
-  vendorId: string.
-  vendorName: string.
-  orderDate: string.
-  promisedDate: string.
-  actualReceiptDate?: string.
-  quantitySent: number.
-  quantityReceived: number.
-  quantityRejected: number.
-  unitPrice: number.
-  totalAmount: number.
-  currency: string.
-  status: 'Draft' | 'Sent' | 'PartialReceipt' | 'Received' | 'Closed' | 'Cancelled'.
-  lines: SubcontractOrderLine[].
-  companyId: string.
+  id: string;
+  orderNumber: string;
+  workOrderId: string;
+  workOrder?: WorkOrder;
+  workOrderNumber: string;
+  operationId: string;
+  operation?: WorkOrderOperation;
+  operationName: string;
+  vendorId: string;
+  vendorName: string;
+  orderDate: string;
+  promisedDate: string;
+  actualReceiptDate?: string;
+  quantitySent: number;
+  quantityReceived: number;
+  quantityRejected: number;
+  unitPrice: number;
+  totalAmount: number;
+  currency: string;
+  status: 'Draft' | 'Sent' | 'PartialReceipt' | 'Received' | 'Closed' | 'Cancelled';
+  lines: SubcontractOrderLine[];
+  companyId: string;
 }
 
 export interface SubcontractOrderLine {
-  id: string.
-  orderId: string.
-  productId: string.
-  product?: Product.
-  productCode: string.
-  productName: string.
-  quantitySent: number.
-  quantityReceived: number.
-  unitCost: number.
+  id: string;
+  orderId: string;
+  productId: string;
+  product?: Product;
+  productCode: string;
+  productName: string;
+  quantitySent: number;
+  quantityReceived: number;
+  unitCost: number;
 }
 
 export interface Warehouse {
-  id: string.
-  code: string.
-  name: string.
-  type: 'RawMaterial' | 'WorkInProcess' | 'FinishedGoods' | 'Transit' | 'Scrap'.
-  isDefault: boolean.
-  locationId?: string.
+  id: string;
+  code: string;
+  name: string;
+  type: 'RawMaterial' | 'WorkInProcess' | 'FinishedGoods' | 'Transit' | 'Scrap';
+  isDefault: boolean;
+  locationId?: string;
 }
 
 export interface FixedAsset {
-  id: string.
-  assetTag: string.
-  name: string.
-  category: string.
-  serialNumber?: string.
-  modelNumber?: string.
-  locationId?: string.
-  departmentId?: string.
-  status: 'Active' | 'Maintenance' | 'Retired' | 'Disposed'.
-  acquisitionCost: number.
-  accumulatedDepreciation: number.
-  netBookValue: number.
-  meterReading: number.
-  meterUnit: 'Hours' | 'Cycles' | 'Kilometers' | 'Units'.
+  id: string;
+  assetTag: string;
+  name: string;
+  category: string;
+  serialNumber?: string;
+  modelNumber?: string;
+  locationId?: string;
+  departmentId?: string;
+  status: 'Active' | 'Maintenance' | 'Retired' | 'Disposed';
+  acquisitionCost: number;
+  accumulatedDepreciation: number;
+  netBookValue: number;
+  meterReading: number;
+  meterUnit: 'Hours' | 'Cycles' | 'Kilometers' | 'Units';
 }
 
 export interface Employee {
-  id: string.
-  employeeCode: string.
-  firstName: string.
-  lastName: string.
-  fullName: string.
-  departmentId?: string.
-  departmentName?: string.
-  position?: string.
-  hourlyRate: number.
-  overtimeRate: number.
-  isActive: boolean.
+  id: string;
+  employeeCode: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  departmentId?: string;
+  departmentName?: string;
+  position?: string;
+  hourlyRate: number;
+  overtimeRate: number;
+  isActive: boolean;
 }
 
 export interface Vendor {
-  id: string.
-  vendorCode: string.
-  name: string.
-  contactPerson?: string.
-  email?: string.
-  phone?: string.
-  address?: string.
-  currency: string.
-  paymentTerms?: string.
-  isActive: boolean.
+  id: string;
+  vendorCode: string;
+  name: string;
+  contactPerson?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  currency: string;
+  paymentTerms?: string;
+  isActive: boolean;
 }
 
 export interface ManufacturingFilters {
-  search?: string.
-  status?: string[].
-  productId?: string.
-  workCenterId?: string.
-  dateFrom?: string.
-  dateTo?: string.
-  priority?: string[].
-  assignedTo?: string.
+  search?: string;
+  status?: string[];
+  productId?: string;
+  workCenterId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  priority?: string[];
+  assignedTo?: string;
 }
 
 export interface ManufacturingKpis {
-  totalWorkOrders: number.
-  activeWorkOrders: number.
-  completedThisMonth: number.
-  onTimeDeliveryRate: number.
-  scrapRate: number.
-  reworkRate: number.
-  wipValue: number.
-  totalVariance: number.
-  machineUtilization: number.
-  laborEfficiency: number.
-  firstPassYield: number.
-  averageLeadTime: number.
-  capacityUtilization: number.
+  totalWorkOrders: number;
+  activeWorkOrders: number;
+  completedThisMonth: number;
+  onTimeDeliveryRate: number;
+  scrapRate: number;
+  reworkRate: number;
+  wipValue: number;
+  totalVariance: number;
+  machineUtilization: number;
+  laborEfficiency: number;
+  firstPassYield: number;
+  averageLeadTime: number;
+  capacityUtilization: number;
 }

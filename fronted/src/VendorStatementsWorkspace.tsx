@@ -9,6 +9,7 @@ import {
   RefreshCw, FileCheck, AlertTriangle
 } from 'lucide-react';
 import { money } from './lib/currency';
+import { formatBillNumber } from './lib/invoiceNumbering';
 import { downloadExcel, downloadCSV } from './lib/exportUtils';
 import ExportDropdown from './components/ExportDropdown';
 import { KpiCard, KpiGrid } from './components/ui/kpi-card';
@@ -121,7 +122,13 @@ export function VendorStatementsWorkspace({ activeEntityId }: Props) {
   ) => {
     const vendor = vendors.find((v) => v.id === vendorId);
     const vendorBills = bills.filter(
-      (b: any) => b.vendorId === vendorId && String(b.status).toLowerCase() !== 'void' && String(b.status).toLowerCase() !== 'cancelled'
+      (b: any) =>
+        b.vendorId === vendorId &&
+        b.status !== 0 &&
+        b.status !== '0' &&
+        String(b.status).toLowerCase() !== 'draft' &&
+        String(b.status).toLowerCase() !== 'void' &&
+        String(b.status).toLowerCase() !== 'cancelled'
     );
     const vendorPayments = payments.filter((p: any) => p.vendorId === vendorId);
 
@@ -158,18 +165,19 @@ export function VendorStatementsWorkspace({ activeEntityId }: Props) {
       status: string;
     }[] = [];
 
-    vendorBills.forEach((b: any) => {
+    vendorBills.forEach((b: any, idx: number) => {
       const d = (b.date || b.billDate || '').slice(0, 10);
       if ((!fromStr || d >= fromStr) && (!toStr || d <= toStr)) {
+        const cleanBillNum = formatBillNumber(b.billNumber || b.reference, idx + 1);
         rawLines.push({
           id: b.id || b.billNumber,
           date: d,
           type: 'Bill',
           typeLabel: 'Vendor Bill',
-          reference: b.reference || b.orderNumber || '',
-          docNumber: b.billNumber || 'BILL',
+          reference: cleanBillNum,
+          docNumber: cleanBillNum,
           dueDate: (b.dueDate || '').slice(0, 10),
-          description: b.notes || `Vendor Bill #${b.billNumber}`,
+          description: b.notes || `Vendor Bill #${cleanBillNum}`,
           debit: 0,
           credit: b.totalAmount || 0,
           status: b.status || 'Posted',

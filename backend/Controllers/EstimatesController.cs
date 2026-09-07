@@ -15,6 +15,7 @@ public class EstimatesController : ControllerBase
         var estimates = _store.Estimates
             .Where(e => companyId == null || e.CompanyId == companyId)
             .OrderByDescending(e => e.EstimateDate)
+            .ThenByDescending(e => e.EstimateNumber)
             .Select(e => new {
                 e.Id, e.EstimateNumber, e.CustomerId,
                 CustomerName = _store.Customers.FirstOrDefault(c => c.Id == e.CustomerId)?.Name ?? "Unknown",

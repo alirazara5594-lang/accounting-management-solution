@@ -1,0 +1,43 @@
+# Build outputs
+bin/
+obj/
+out/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Frontend
+fronted/node_modules/
+fronted/dist/
+
+# Database files
+*.db
+*.sqlite
+
+# Environment / secrets
+.env
+.env.*
+appsettings.Development.json
+appsettings.Production.json
+
+# NuGet
+*.nupkg
+packages/
+
+# Test results
+TestResults/
+
+# Logs
+logs/
+*.log
+
+# Entity Framework migrations snapshots (generated)
+**/Migrations/*.Designer.cs

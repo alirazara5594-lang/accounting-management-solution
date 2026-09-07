@@ -3,7 +3,10 @@ import { useProcurementStore, useVendorsStore, useProductsStore, useTaxStore } f
 import { DataToolbar } from '@/components/ui/data-toolbar';
 import { EmptyState, TableSkeleton } from './components/ui/empty-state';
 import { StatusChip } from './components/ui/status-chip';
+import { formatPONumber } from './lib/invoiceNumbering';
 import { Package, Info, X, ShoppingCart, FileText } from 'lucide-react';
+import { CompactProductSelect } from './components/CompactProductSelect';
+import { CompactSelect } from './components/CompactSelect';
 
 interface TaxRate {
   percentage: number;
@@ -321,12 +324,12 @@ export const PurchaseOrders: React.FC<{activeEntityId?: string, entities?: any[]
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {pos.map(po => {
+                  {pos.map((po, idx) => {
                     const vendor = vendors.find(v => v.id === po.vendorId);
                     const total = po.lines.reduce((s, l) => s + (l.totalAmount || 0), 0);
                     return (
                       <tr key={po.id} className="hover:bg-gray-50/50 transition-colors">
-                        <td className="py-4 font-medium text-gray-900">{po.poNumber}</td>
+                        <td className="py-4 font-medium text-gray-900 font-mono">{formatPONumber(po.poNumber, idx + 1)}</td>
                         <td className="py-4 text-gray-500">{po.date}</td>
                         <td className="py-4 text-gray-700">{vendor?.name || 'Unknown'}</td>
                         <td className="py-4 text-gray-900 font-medium text-right">${total.toFixed(2)}</td>
@@ -409,10 +412,13 @@ export const PurchaseOrders: React.FC<{activeEntityId?: string, entities?: any[]
               <div className="grid grid-cols-2 gap-6 mb-8">
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5 block">Vendor</label>
-                  <select value={poVendorId} onChange={e => setPoVendorId(e.target.value)} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none">
-                    <option value="">Select Vendor...</option>
-                    {vendors.map(v => <option key={v.id} value={v.id}>{v.name} ({v.vendorNumber})</option>)}
-                  </select>
+                  <CompactSelect
+                    value={poVendorId}
+                    onChange={v => setPoVendorId(v)}
+                    options={vendors.map(v => ({ value: v.id, label: v.name, badge: v.vendorNumber }))}
+                    placeholder="Select Vendor..."
+                    className="h-10"
+                  />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5 block">PO Date</label>
@@ -443,10 +449,11 @@ export const PurchaseOrders: React.FC<{activeEntityId?: string, entities?: any[]
                   {poLines.map((line, i) => (
                     <tr key={i}>
                       <td className="py-2 pr-2">
-                        <select value={line.productId} onChange={e => updatePoLine(i, 'productId', e.target.value)} className="w-full px-2 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm">
-                          <option value="">Select...</option>
-                          {products.map(p => <option key={p.id} value={p.id}>{p.code} - {p.name}</option>)}
-                        </select>
+                        <CompactProductSelect
+                          value={line.productId}
+                          onChange={v => updatePoLine(i, 'productId', v)}
+                          products={products}
+                        />
                       </td>
                       <td className="py-2 pr-2">
                         <select value={line.destination} onChange={e => updatePoLine(i, 'destination', parseInt(e.target.value))} className="w-full px-2 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm">
@@ -541,10 +548,17 @@ export const PurchaseOrders: React.FC<{activeEntityId?: string, entities?: any[]
               <div className="grid grid-cols-2 gap-6 mb-8">
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5 block">Purchase Order</label>
-                  <select value={grnPoId} onChange={e => handleGrnPoChange(e.target.value)} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none">
-                    <option value="">Select PO...</option>
-                    {pos.filter(p => p.status === 1 || p.status === 2).map(p => <option key={p.id} value={p.id}>{p.poNumber} ({vendors.find(v => v.id === p.vendorId)?.name})</option>)}
-                  </select>
+                  <CompactSelect
+                    value={grnPoId}
+                    onChange={v => handleGrnPoChange(v)}
+                    options={pos.filter(p => p.status === 1 || p.status === 2).map(p => ({
+                      value: p.id,
+                      label: `${p.poNumber} (${vendors.find(v => v.id === p.vendorId)?.name || 'Unknown'})`,
+                      badge: p.poNumber
+                    }))}
+                    placeholder="Select PO..."
+                    className="h-10"
+                  />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5 block">Date Received</label>

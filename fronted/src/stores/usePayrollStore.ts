@@ -53,6 +53,7 @@ interface PayrollState {
   fetchPayrunEmployees: (id: string) => Promise<PayrunEmployee[]>;
   calculatePayrun: (data: any) => Promise<any>;
   postPayrun: (data: any) => Promise<any>;
+  postPayrunToGL: (id: string) => Promise<boolean>;
   fetchSalarySlips: (params?: any) => Promise<void>;
   fetchSalarySlip: (id: string) => Promise<SalarySlip | null>;
   fetchAll: () => Promise<void>;
@@ -324,6 +325,18 @@ export const usePayrollStore = create<PayrollState>((set, _get) => ({
     try {
       return await payrollApi.postPayrun(data);
     } catch { return null; }
+  },
+
+  postPayrunToGL: async (id) => {
+    try {
+      const res = await payrollApi.postPayrunToGL(id);
+      if (res?.success) {
+        const data = await payrollApi.getPayruns();
+        set({ payruns: data });
+        return true;
+      }
+      return false;
+    } catch { return false; }
   },
 
   fetchSalarySlips: async (params) => {

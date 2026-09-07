@@ -278,6 +278,7 @@ export const useProcurementStore = create<ProcurementState>((set, get) => ({
         get().fetchVendorQuotes(undefined, companyId),
         get().fetchOrders(companyId),
         get().fetchGrns(companyId),
+        get().fetchBills(companyId),
         get().fetchTransfers(companyId)
       ]);
       set({ loading: false });

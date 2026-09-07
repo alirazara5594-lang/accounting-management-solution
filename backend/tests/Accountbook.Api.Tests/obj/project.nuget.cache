@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "UP5Ys13aA9M=",
+  "dgSpecHash": "b9Ux/fT615o=",
   "success": true,
-  "projectFilePath": "D:\\Project\\accountbook\\backend\\tests\\Accountbook.Api.Tests\\Accountbook.Api.Tests.csproj",
+  "projectFilePath": "D:\\Project\\accounting-management-solution\\backend\\tests\\Accountbook.Api.Tests\\Accountbook.Api.Tests.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Muhammad Ali\\.nuget\\packages\\azure.core\\1.47.1\\azure.core.1.47.1.nupkg.sha512",
     "C:\\Users\\Muhammad Ali\\.nuget\\packages\\azure.identity\\1.14.2\\azure.identity.1.14.2.nupkg.sha512",

@@ -9,11 +9,12 @@ namespace Zenabook.Api.Controllers;
 public class ProductsController(AccountingStore store) : ControllerBase
 {
     [HttpGet]
-    public IActionResult Get([FromQuery] string? search, [FromQuery] ProductStatus? status, [FromQuery] ProductType? type)
+    public IActionResult Get([FromQuery] string? search, [FromQuery] ProductStatus? status, [FromQuery] ProductType? type, [FromQuery] ProductPurpose? purpose)
     {
         var result = store.Products.Where(p =>
             (status is null || p.Status == status) &&
             (type is null || p.Type == type) &&
+            (purpose is null || p.Purpose == purpose) &&
             (string.IsNullOrWhiteSpace(search) ||
              p.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
              p.Code.Contains(search, StringComparison.OrdinalIgnoreCase) ||
@@ -53,6 +54,16 @@ public class ProductsController(AccountingStore store) : ControllerBase
     public IActionResult SetStatus(Guid id, ProductStatusRequest request)
     {
         if (store.SetProductStatus(id, request.Status, out var error))
+        {
+            return Ok(store.FindProduct(id));
+        }
+        return BadRequest(new { message = error });
+    }
+
+    [HttpPatch("{id:guid}/purpose")]
+    public IActionResult SetPurpose(Guid id, [FromBody] ProductPurposeRequest request)
+    {
+        if (store.SetProductPurpose(id, request.Purpose, out var error))
         {
             return Ok(store.FindProduct(id));
         }

@@ -23,49 +23,6 @@ interface LoginProps {
   onLogin: (user: UserData) => void;
 }
 
-const DEMO_USERS: DemoUser[] = [
-  {
-    email: 'admin@acme.com',
-    fullName: 'Muhammad Ali',
-    role: 'Finance admin',
-    avatar: 'MA',
-    provider: 'email',
-    defaultPassword: 'password123',
-  },
-  {
-    email: 'accountant@acme.com',
-    fullName: 'Sarah Jenkins',
-    role: 'Senior Accountant',
-    avatar: 'SJ',
-    provider: 'email',
-    defaultPassword: 'password123',
-  },
-  {
-    email: 'inventory@acme.com',
-    fullName: 'David Chen',
-    role: 'Warehouse Manager',
-    avatar: 'DC',
-    provider: 'email',
-    defaultPassword: 'password123',
-  },
-  {
-    email: 'manufacturing@acme.com',
-    fullName: 'Alex Rivera',
-    role: 'Production Engineer',
-    avatar: 'AR',
-    provider: 'email',
-    defaultPassword: 'password123',
-  },
-  {
-    email: 'auditor@acme.com',
-    fullName: 'Amina Al-Mansoor',
-    role: 'External Auditor',
-    avatar: 'AM',
-    provider: 'email',
-    defaultPassword: 'password123',
-  },
-];
-
 interface RegisteredUser {
   fullName: string;
   email: string;
@@ -128,9 +85,7 @@ export function Login({ onLogin }: LoginProps) {
       }
       const emailNorm = email.trim().toLowerCase();
       const registered = loadRegistered();
-      const taken =
-        DEMO_USERS.some((u) => u.email.toLowerCase() === emailNorm) ||
-        registered.some((u) => u.email.toLowerCase() === emailNorm);
+      const taken = registered.some((u) => u.email.toLowerCase() === emailNorm);
       if (taken) {
         setError('An account with this email already exists. Please sign in.');
         return;
@@ -154,11 +109,6 @@ export function Login({ onLogin }: LoginProps) {
 
     setTimeout(() => {
       const emailNorm = email.toLowerCase().trim();
-      const demo = DEMO_USERS.find((u) => u.email.toLowerCase() === emailNorm);
-      if (demo) {
-        completeLogin(demo);
-        return;
-      }
       const registered = loadRegistered().find((u) => u.email.toLowerCase() === emailNorm);
       if (registered && (!password || registered.password === password)) {
         completeLogin({
@@ -183,14 +133,6 @@ export function Login({ onLogin }: LoginProps) {
       setIsLoading(false);
       setError('Please enter a valid email address.');
     }, 150);
-  };
-
-  const handleSelectDemoUser = (user: DemoUser) => {
-    setEmail(user.email);
-    setPassword(user.defaultPassword || 'password123');
-    setError(null);
-    setIsLoading(true);
-    completeLogin(user);
   };
 
   return (
@@ -255,7 +197,7 @@ export function Login({ onLogin }: LoginProps) {
             </h2>
             <p className="login-panel-sub">
               {mode === 'signin'
-                ? 'Enter your credentials or click any demo persona below.'
+                ? 'Enter your credentials to access your organization.'
                 : 'Fill in your details to set up your ERP account.'}
             </p>
           </div>
@@ -402,34 +344,6 @@ export function Login({ onLogin }: LoginProps) {
               </button>
             )}
           </div>
-
-          {/* 1-Click Auto-Fill Demo Personas Grid */}
-          {mode === 'signin' && (
-            <div className="demo-section">
-              <div className="demo-header-title">
-                <span>Select Demo Account</span>
-                <span style={{ color: '#2dd4bf' }}>Auto-Fills Email & Password</span>
-              </div>
-              <div className="demo-chips-grid">
-                {DEMO_USERS.map((user) => (
-                  <button
-                    key={user.email}
-                    type="button"
-                    className="demo-chip"
-                    onClick={() => handleSelectDemoUser(user)}
-                    disabled={isLoading}
-                    title={`Click to fill email & password for ${user.fullName} (${user.role})`}
-                  >
-                    <div className="demo-chip-avatar">{user.avatar}</div>
-                    <div className="demo-chip-content">
-                      <span className="demo-chip-name">{user.fullName}</span>
-                      <span className="demo-chip-role">{user.role}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

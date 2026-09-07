@@ -1,24 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useManufacturingStore, useProductsStore, useAssetsInventoryStore } from './stores';
 import { ManufacturingWorkspace } from './ManufacturingWorkspace';
 import { KpiCard, KpiGrid } from './components/ui/kpi-card';
-import { StatusChip } from './components/ui/status-chip';
-import { EmptyState } from './components/ui/empty-state';
-import ExportDropdown from './components/ExportDropdown';
 import { assetsInventoryApi } from './api/modules/assetsInventory.api';
 import type { FixedAsset } from './api/modules/assetsInventory.api';
-import { manufacturingApi } from './api/modules/manufacturing.api';
-import type { WorkOrder, BillOfMaterials } from './api/modules/manufacturing.api';
 import {
-  Factory, Plus, Search, CheckCircle2, Zap, Layers, Gauge, Cpu, Check,
-  ShieldCheck, Activity, ClipboardList, AlertTriangle, Wallet, Hammer,
-  FileSpreadsheet, FileText, Download, Printer, Filter, ChevronRight,
-  TrendingUp, Clock, Settings, ArrowUpRight, Scale, BarChart3, X, Eye
+  Factory, CheckCircle2, Layers, Gauge, Cpu,
+  Activity, ClipboardList, Wallet, Hammer
 } from 'lucide-react';
 import { money } from './lib/currency';
-import { downloadExcel, downloadCSV } from './lib/exportUtils';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
 const FACTORY_WORK_CENTERS = [
   'CNC Machining Center',
@@ -29,14 +19,6 @@ const FACTORY_WORK_CENTERS = [
   'Quality Testing & Inspection Lab',
 ];
 
-const statusBadgeColors: Record<string, string> = {
-  Draft: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-  Released: 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border-blue-200',
-  InProgress: 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 border-amber-200',
-  Completed: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-200',
-  Cancelled: 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 border-rose-200'
-};
-
 function useMfgData(activeEntityId?: string) {
   const store = useManufacturingStore();
   const productsStore = useProductsStore();
@@ -44,7 +26,7 @@ function useMfgData(activeEntityId?: string) {
   const [machines, setMachines] = useState<FixedAsset[]>([]);
 
   useEffect(() => {
-    store.fetchAllManufacturing(activeEntityId);
+    store.fetchAllManufacturing(activeEntityId || '');
     productsStore.fetchProducts();
     if (activeEntityId) {
       assetsStore.fetchWarehouses(activeEntityId);

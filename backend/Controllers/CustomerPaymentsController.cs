@@ -15,6 +15,7 @@ public class CustomerPaymentsController : ControllerBase
         var payments = _store.CustomerPayments
             .Where(p => companyId == null || p.CompanyId == companyId)
             .OrderByDescending(p => p.PaymentDate)
+            .ThenByDescending(p => p.ReceiptNumber)
             .Select(p => new {
                 p.Id,
                 p.ReceiptNumber,
@@ -80,5 +81,13 @@ public class CustomerPaymentsController : ControllerBase
         if (!_store.CreateCustomerPayment(request, out var payment, out var error))
             return BadRequest(new { error });
         return Created($"/api/v1/customer-payments/{payment!.Id}", payment);
+    }
+
+    [HttpPost("{id}/void")]
+    public IActionResult VoidPayment(Guid id)
+    {
+        if (_store.VoidCustomerPayment(id, out var error))
+            return Ok(new { message = "Customer payment voided and ledger reversal posted." });
+        return BadRequest(new { error });
     }
 }

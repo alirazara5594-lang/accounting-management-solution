@@ -162,6 +162,15 @@ export const BankTransactionsView = ({
       }
 
       return true;
+    }).sort((a, b) => {
+      const dateA = a.date || '';
+      const dateB = b.date || '';
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
+      const refA = a.ref || '';
+      const refB = b.ref || '';
+      return refB.localeCompare(refA, undefined, { numeric: true, sensitivity: 'base' });
     });
   }, [transactionsData, fromDate, toDate, accountFilter, flowFilter, typeFilter, query]);
 

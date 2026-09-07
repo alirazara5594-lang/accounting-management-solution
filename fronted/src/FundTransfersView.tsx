@@ -25,6 +25,21 @@ interface TransferRecord {
 
 interface TransferAccount { id: string; code: string; name: string; }
 
+const getNextFundTransferReference = (allTransfers: TransferRecord[] = []): string => {
+  let maxSeq = 0;
+  for (const t of allTransfers) {
+    if (!t?.reference) continue;
+    const match = t.reference.match(/TRF-(\d+)/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num > maxSeq && num < 1000000) {
+        maxSeq = num;
+      }
+    }
+  }
+  return `TRF-${String(maxSeq + 1).padStart(5, '0')}`;
+};
+
 export const FundTransfersView: React.FC<{ activeEntityId: string; entities: Entity[] }> = ({ activeEntityId, entities }) => {
   const currentEntity = entities.find(e => e.id === activeEntityId);
   const [transfers, setTransfers] = useState<TransferRecord[]>([]);
@@ -40,7 +55,7 @@ export const FundTransfersView: React.FC<{ activeEntityId: string; entities: Ent
     toAccountId: '',
     date: new Date().toISOString().slice(0, 10),
     amount: '',
-    reference: `TRF-${Math.floor(1000 + Math.random() * 9000)}`
+    reference: 'TRF-00001'
   });
 
   const loadTransfers = async () => {
@@ -71,14 +86,27 @@ export const FundTransfersView: React.FC<{ activeEntityId: string; entities: Ent
   }, [isModalOpen, accounts]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return transfers;
-    const q = query.toLowerCase();
-    return transfers.filter(t =>
-      (t.transferNumber || '').toLowerCase().includes(q) ||
-      (t.fromAccountName || '').toLowerCase().includes(q) ||
-      (t.toAccountName || '').toLowerCase().includes(q) ||
-      (t.reference || '').toLowerCase().includes(q)
-    );
+    return transfers
+      .filter(t => {
+        if (!query.trim()) return true;
+        const q = query.toLowerCase();
+        return (
+          (t.transferNumber || '').toLowerCase().includes(q) ||
+          (t.fromAccountName || '').toLowerCase().includes(q) ||
+          (t.toAccountName || '').toLowerCase().includes(q) ||
+          (t.reference || '').toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        const dateA = a.date || '';
+        const dateB = b.date || '';
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA);
+        }
+        const numA = a.transferNumber || a.reference || '';
+        const numB = b.transferNumber || b.reference || '';
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' });
+      });
   }, [transfers, query]);
 
   const exportHeaders = ['Date', 'Transfer #', 'Source Account', 'Target Account', 'Reference', 'Status', 'Amount'];
@@ -108,8 +136,8 @@ export const FundTransfersView: React.FC<{ activeEntityId: string; entities: Ent
         },
       });
       setIsModalOpen(false);
-      setForm({ fromAccountId: '', toAccountId: '', date: new Date().toISOString().slice(0, 10), amount: '', reference: `TRF-${Math.floor(1000 + Math.random() * 9000)}` });
       await loadTransfers();
+      setForm(f => ({ ...f, fromAccountId: '', toAccountId: '', date: new Date().toISOString().slice(0, 10), amount: '', reference: getNextFundTransferReference(transfers) }));
     } catch (err: any) {
       setFormError(err?.data?.error || err?.message || 'Failed to create transfer.');
     } finally {

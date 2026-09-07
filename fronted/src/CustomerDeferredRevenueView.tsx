@@ -574,7 +574,7 @@ export default function CustomerDeferredRevenueView({ activeEntityId, accounts =
                 <div>
                   <label className="font-bold block mb-1">Contract / Order Ref #</label>
                   <input
-                    placeholder="e.g. SO-2026-0045"
+                    placeholder="e.g. SO-00001"
                     value={form.referenceNumber}
                     onChange={e => setForm({ ...form, referenceNumber: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-medium"

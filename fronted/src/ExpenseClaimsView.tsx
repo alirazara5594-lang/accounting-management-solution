@@ -7,6 +7,7 @@ import {
 import { useCoaStore, useExpenseClaimsStore } from './stores'
 import { useFormDraft } from './hooks/useFormDraft'
 import { DataToolbar } from '@/components/ui/data-toolbar'
+import { CompactSelect } from './components/CompactSelect'
 import { money } from '@/lib/currency'
 import type { Entity } from './EntitySettings'
 
@@ -109,15 +110,26 @@ export const ExpenseClaimsView: React.FC<{ activeEntityId: string; entities?: En
   }
 
   const filtered = useMemo(() => {
-    return claims.filter(c => {
-      const matchesQuery = !query.trim()
-        ? true
-        : `${c.claimNumber} ${c.employeeName} ${c.department} ${c.notes || ''}`.toLowerCase().includes(query.toLowerCase())
+    return claims
+      .filter(c => {
+        const matchesQuery = !query.trim()
+          ? true
+          : `${c.claimNumber} ${c.employeeName} ${c.department} ${c.notes || ''}`.toLowerCase().includes(query.toLowerCase())
 
-      const matchesStatus = statusFilter === 'all' || c.status.toLowerCase() === statusFilter.toLowerCase()
+        const matchesStatus = statusFilter === 'all' || c.status.toLowerCase() === statusFilter.toLowerCase()
 
-      return matchesQuery && matchesStatus
-    })
+        return matchesQuery && matchesStatus
+      })
+      .sort((a, b) => {
+        const dateA = a.date || a.createdAt || ''
+        const dateB = b.date || b.createdAt || ''
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA)
+        }
+        const numA = a.claimNumber || ''
+        const numB = b.claimNumber || ''
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' })
+      })
   }, [claims, query, statusFilter])
 
   const exportHeaders = ['Claim #', 'Date', 'Employee', 'Department', 'Amount', 'Currency', 'Status', 'Notes']
@@ -443,16 +455,19 @@ export const ExpenseClaimsView: React.FC<{ activeEntityId: string; entities?: En
                     <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
                       GL Expense Account (Optional)
                     </label>
-                    <select
+                    <CompactSelect
                       value={form.accountId}
-                      onChange={e => setForm({ ...form, accountId: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      <option value="">-- General Operating Expense --</option>
-                      {expenseAccounts.map(a => (
-                        <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
-                      ))}
-                    </select>
+                      onChange={v => setForm({ ...form, accountId: v })}
+                      placeholder="-- General Operating Expense --"
+                      searchPlaceholder="Search expense account..."
+                      clearLabel="-- General Operating Expense --"
+                      options={expenseAccounts.map(a => ({
+                        value: a.id,
+                        label: `${a.code} — ${a.name}`,
+                        badge: 'Expense'
+                      }))}
+                      className="h-10 text-xs"
+                    />
                   </div>
 
                   <div className="md:col-span-2">
@@ -567,9 +582,6 @@ export const ExpenseClaimsView: React.FC<{ activeEntityId: string; entities?: En
 
               <div className="flex items-center gap-2">
                 <button type="button" className="h-9 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium hover:bg-[var(--color-surface-muted)] transition-colors" onClick={() => setShowForm(false)}>Cancel</button>
-                {modalTab !== 'preview' && (
-                  <button type="button" className="h-9 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium hover:bg-[var(--color-surface-muted)] transition-colors" onClick={(e) => { e.preventDefault(); saveDraft(); notify('Claim draft saved locally.'); }}>Save Draft</button>
-                )}
 
                 {modalTab !== 'employee' && (
                   <button type="button" onClick={() => { if (modalTab === 'preview') setModalTab('summary'); else if (modalTab === 'summary') setModalTab('expense'); else if (modalTab === 'expense') setModalTab('employee'); }} className="h-9 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium hover:bg-[var(--color-surface-muted)] transition-colors flex items-center gap-1">

@@ -4,6 +4,7 @@ import { useProcurementStore, useProductsStore } from './stores';
 import { DataToolbar } from '@/components/ui/data-toolbar';
 import { EmptyState, TableSkeleton } from './components/ui/empty-state';
 import { StatusChip } from './components/ui/status-chip';
+import { CompactProductSelect } from './components/CompactProductSelect';
 
 interface PurchaseRequestLine {
   id?: string;
@@ -194,13 +195,17 @@ export const PurchaseRequests: React.FC<{activeEntityId: string, entities: any[]
                 <button onClick={addLine} className="text-sm px-3 py-1.5 bg-gray-100 rounded-lg">+ Add Item</button>
               </div>
               {lines.map((line, i) => (
-                <div key={i} className="flex gap-4 mb-3">
-                  <select value={line.productId} onChange={e => updateLine(i, 'productId', e.target.value)} className="flex-1 border rounded-lg px-3 py-2 text-sm">
-                    <option value="">Select Product...</option>
-                    {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                  <input type="number" min="1" value={line.quantity} onChange={e => updateLine(i, 'quantity', Number(e.target.value))} className="w-24 border rounded-lg px-3 py-2 text-sm text-right" />
-                  <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="text-red-500">✕</button>
+                <div key={i} className="flex gap-4 mb-3 items-center">
+                  <div className="flex-1">
+                    <CompactProductSelect
+                      value={line.productId}
+                      onChange={v => updateLine(i, 'productId', v)}
+                      products={products}
+                      placeholder="Select Product..."
+                    />
+                  </div>
+                  <input type="number" min="1" value={line.quantity} onChange={e => updateLine(i, 'quantity', Number(e.target.value))} className="w-24 border rounded-lg px-3 py-1.5 text-sm text-right h-8" />
+                  <button onClick={() => setLines(lines.filter((_, idx) => idx !== i))} className="text-red-500 hover:text-red-700">✕</button>
                 </div>
               ))}
             </div>

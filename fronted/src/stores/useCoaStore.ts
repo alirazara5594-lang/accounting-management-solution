@@ -42,6 +42,14 @@ export const useCoaStore = create<CoaState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const saved = await coaApi.saveAccount(accountData, id);
+      set(state => {
+        const targetId = id || saved?.id;
+        const exists = state.accounts.some(a => a.id === targetId);
+        const updatedAccounts = exists
+          ? state.accounts.map(a => a.id === targetId ? { ...a, ...accountData, ...(saved || {}) } : a)
+          : [...state.accounts, (saved || { id: targetId, ...accountData })];
+        return { accounts: updatedAccounts, loading: false };
+      });
       await get().fetchAccounts();
       return saved;
     } catch (err: any) {
@@ -54,6 +62,9 @@ export const useCoaStore = create<CoaState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const newStatus = account.status === 'Active' ? 'Inactive' : 'Active';
+      set(state => ({
+        accounts: state.accounts.map(a => a.id === account.id ? { ...a, status: newStatus } : a)
+      }));
       await coaApi.toggleAccountStatus(account.id, newStatus);
       await get().fetchAccounts();
     } catch (err: any) {

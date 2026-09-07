@@ -29,6 +29,23 @@ function collectOptions(node: React.ReactNode): { value: string; label: React.Re
   return out
 }
 
+function findPlaceholder(node: React.ReactNode): string | undefined {
+  let placeholder: string | undefined = undefined
+  const walk = (n: React.ReactNode) => {
+    if (!React.isValidElement(n)) return
+    const el = n as React.ReactElement<any>
+    if (el.type === SelectValue && el.props?.placeholder) {
+      placeholder = el.props.placeholder
+      return
+    }
+    if (el.props?.children != null) {
+      React.Children.forEach(el.props.children, walk)
+    }
+  }
+  React.Children.forEach(node, walk)
+  return placeholder
+}
+
 function Select({
   value,
   defaultValue,
@@ -41,6 +58,7 @@ function Select({
   const [internal, setInternal] = React.useState(defaultValue ?? "")
   const current = value ?? internal
   const options = collectOptions(children)
+  const effectivePlaceholder = placeholder || findPlaceholder(children)
 
   return (
     <select
@@ -53,11 +71,11 @@ function Select({
         onValueChange?.(v)
       }}
       className={cn(
-        "flex h-8 w-fit items-center justify-between gap-1.5 rounded-2xl border border-transparent bg-input/50 px-3 py-0 text-sm whitespace-nowrap transition-[color,box-shadow] duration-200 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "flex h-9 w-full items-center justify-between gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-sm transition-[color,box-shadow] duration-200 outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 text-[var(--color-text-strong)]",
         className
       )}
     >
-      {placeholder && <option value="">{placeholder}</option>}
+      {effectivePlaceholder && <option value="">{effectivePlaceholder}</option>}
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}

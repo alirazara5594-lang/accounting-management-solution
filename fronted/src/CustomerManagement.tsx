@@ -133,7 +133,7 @@ export default function CustomerManagement({
   const [modalTab, setModalTab] = useState<'general' | 'address' | 'financial' | 'tax' | 'preview'>('general')
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
   const [form, setForm] = useState<CustomerForm>(blankForm())
-  const { saveDraft, clearDraft } = useFormDraft('customer', form, setForm, modalOpen)
+  const { saveDraft, clearDraft } = useFormDraft('customer', form, setForm, modalOpen, !!editingCustomer)
 
   useEffect(() => {
     fetchCustomers()
@@ -156,6 +156,10 @@ export default function CustomerManagement({
       const matchesStatus = statusFilter === 'all' ? true : c.status === statusFilter
 
       return matchesSearch && matchesCompany && matchesStatus
+    }).sort((a, b) => {
+      const numA = a.customerNumber || a.name || ''
+      const numB = b.customerNumber || b.name || ''
+      return numA.localeCompare(numB, undefined, { numeric: true, sensitivity: 'base' })
     })
   }, [customers, search, companyFilter, statusFilter])
 
@@ -231,12 +235,21 @@ export default function CustomerManagement({
     setModalOpen(true)
   }
 
-  const handleSave = async (e: FormEvent) => {
-    e.preventDefault()
+  const handleConfirmSave = async (e?: FormEvent) => {
+    if (e) e.preventDefault()
     if (!form.name.trim()) {
       notify('Customer name is required.')
+      setModalTab('general')
       return
     }
+
+    // Only allow submission when on the preview tab
+    if (modalTab !== 'preview') {
+      setModalTab('preview')
+      return
+    }
+
+    const isGuid = (val?: string | null) => !!val && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(val)
 
     const payload = {
       customerNumber: form.customerNumber || null,
@@ -255,7 +268,7 @@ export default function CustomerManagement({
       currencyCode: form.currencyCode.trim() || 'PKR',
       creditLimit: Number(form.creditLimit) || 0,
       paymentTermsDays: Number(form.paymentTermsDays) || 30,
-      companyId: form.companyId || null
+      companyId: isGuid(form.companyId) ? form.companyId : null
     }
 
     try {
@@ -465,7 +478,7 @@ export default function CustomerManagement({
         <div className="overlay animate-in fade-in duration-200">
           <form
             className="w-full max-w-4xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
-            onSubmit={handleSave}
+            onSubmit={(e) => { e.preventDefault(); }}
           >
             {/* Modal Header */}
             <div className="px-6 py-4.5 border-b border-[var(--color-border)] bg-[var(--color-surface-muted)]/50 flex items-center justify-between">
@@ -500,378 +513,379 @@ export default function CustomerManagement({
               </button>
             </div>
 
-            {/* Modal Tabs Navigation */}
-            <div className="flex items-center gap-1 px-4 pt-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+            {/* Modal Stepper Navigation */}
+            <div className="erp-stepper-nav">
               <button
                 type="button"
                 onClick={() => setModalTab('general')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'general'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'general' ? 'active' : ''}`}
               >
-                <Users className="w-3 h-3" /> General & Contact
+                <span className="erp-step-num">1</span>
+                <Users className="w-3.5 h-3.5" />
+                <span>General & Contact</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setModalTab('address')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'address'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'address' ? 'active' : ''}`}
               >
-                <MapPin className="w-3 h-3" /> Address & Location
+                <span className="erp-step-num">2</span>
+                <MapPin className="w-3.5 h-3.5" />
+                <span>Address & Location</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setModalTab('financial')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'financial'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'financial' ? 'active' : ''}`}
               >
-                <CreditCard className="w-3 h-3" /> Terms & Financials
+                <span className="erp-step-num">3</span>
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>Terms & Credit</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setModalTab('tax')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'tax'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'tax' ? 'active' : ''}`}
               >
-                <Receipt className="w-3 h-3" /> Tax & Compliance
+                <span className="erp-step-num">4</span>
+                <Receipt className="w-3.5 h-3.5" />
+                <span>Tax & Compliance</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setModalTab('preview')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                  modalTab === 'preview'
-                    ? 'border-emerald-600 text-emerald-600 bg-emerald-500/10'
-                    : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)]'
-                }`}
+                className={`erp-step-pill ${modalTab === 'preview' ? 'active' : ''}`}
               >
-                <Eye className="w-3 h-3" /> Preview
+                <span className="erp-step-num">5</span>
+                <Eye className="w-3.5 h-3.5" />
+                <span>Review & Preview</span>
               </button>
             </div>
 
             {/* Modal Body / Tab Content */}
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 space-y-5">
+            <div className="p-6 md:p-8 overflow-y-auto flex-1 space-y-6">
               {modalTab === 'general' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      <span className="text-rose-500 font-bold mr-1">*</span> Customer / Company Name
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Building2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        required
-                        placeholder="e.g. Apex Global Logistics LLC"
-                        value={form.name}
-                        onChange={e => setForm({ ...form, name: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
+                <div className="space-y-5">
+                  <div className="erp-form-card space-y-4">
+                    <div className="border-b border-[var(--color-border)] pb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-sky-500" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-strong)]">Customer Account Profile</h4>
+                      </div>
+                      <span className="text-[11px] text-[var(--color-text-muted)] font-medium">Step 1 of 5</span>
                     </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Customer Number (Account Code)
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Hash className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        placeholder="e.g. CUST-0001 (Auto-generated)"
-                        value={form.customerNumber}
-                        onChange={e => setForm({ ...form, customerNumber: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent font-mono text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
-                    </div>
-                  </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="md:col-span-2">
+                        <label className="erp-form-label">
+                          <span className="text-rose-500 font-bold mr-1">*</span> Customer / Organization Name
+                        </label>
+                        <div className="relative">
+                          <Building2 className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            required
+                            placeholder="e.g. Apex Global Logistics LLC"
+                            value={form.name}
+                            onChange={e => setForm({ ...form, name: e.target.value })}
+                            className="erp-form-input pl-10! font-semibold"
+                          />
+                        </div>
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Assigned Company Entity
-                    </label>
-                    <select
-                      value={form.companyId}
-                      onChange={e => setForm({ ...form, companyId: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      <option value="">🌐 All / Group Customer (Global)</option>
-                      {entities.map(e => (
-                        <option key={e.id} value={e.id}>
-                          🏢 {e.name} {e.code ? `(${e.code})` : ''} {e.id === activeEntityId ? '★ (Active Workspace)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-sky-500" /> Automatically assigned from top header workspace.
-                    </p>
-                  </div>
+                      <div>
+                        <label className="erp-form-label">
+                          Customer Code / Account #
+                        </label>
+                        <div className="relative">
+                          <Hash className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            placeholder="Auto-generated if blank (CUST-XXXX)"
+                            value={form.customerNumber}
+                            onChange={e => setForm({ ...form, customerNumber: e.target.value })}
+                            className="erp-form-input pl-10! font-mono"
+                          />
+                        </div>
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Primary Email Address
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Mail className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        type="email"
-                        placeholder="billing@apexlogistics.com"
-                        value={form.email}
-                        onChange={e => setForm({ ...form, email: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
-                    </div>
-                  </div>
+                      <div>
+                        <label className="erp-form-label">
+                          Assigned Business Entity
+                        </label>
+                        <select
+                          value={form.companyId}
+                          onChange={e => setForm({ ...form, companyId: e.target.value })}
+                          className="erp-form-select font-medium"
+                        >
+                          <option value="">🌐 All / Group Customer (Global Access)</option>
+                          {entities.map(e => (
+                            <option key={e.id} value={e.id}>
+                              🏢 {e.name} {e.code ? `(${e.code})` : ''} {e.id === activeEntityId ? '★ (Active Workspace)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Company Phone / Landline
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Phone className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        placeholder="+92 (42) 35789000"
-                        value={form.phone}
-                        onChange={e => setForm({ ...form, phone: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
-                    </div>
-                  </div>
+                      <div>
+                        <label className="erp-form-label">Primary Billing Email</label>
+                        <div className="relative">
+                          <Mail className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="email"
+                            placeholder="billing@apexlogistics.com"
+                            value={form.email}
+                            onChange={e => setForm({ ...form, email: e.target.value })}
+                            className="erp-form-input pl-10!"
+                          />
+                        </div>
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Contact Person Name
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <User className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        placeholder="e.g. Muhammad Ali / Sarah Khan"
-                        value={form.contactPerson}
-                        onChange={e => setForm({ ...form, contactPerson: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
-                    </div>
-                  </div>
+                      <div>
+                        <label className="erp-form-label">Company Landline / Phone</label>
+                        <div className="relative">
+                          <Phone className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            placeholder="+92 (42) 35789000"
+                            value={form.phone}
+                            onChange={e => setForm({ ...form, phone: e.target.value })}
+                            className="erp-form-input pl-10!"
+                          />
+                        </div>
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Contact Person Phone / Mobile
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Phone className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        placeholder="+92 (300) 1234567"
-                        value={form.contactPhone}
-                        onChange={e => setForm({ ...form, contactPhone: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
+                      <div>
+                        <label className="erp-form-label">Contact Person Name</label>
+                        <div className="relative">
+                          <User className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            placeholder="e.g. Muhammad Ali"
+                            value={form.contactPerson}
+                            onChange={e => setForm({ ...form, contactPerson: e.target.value })}
+                            className="erp-form-input pl-10!"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">Contact Person Mobile</label>
+                        <div className="relative">
+                          <Phone className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            placeholder="+92 (300) 1234567"
+                            value={form.contactPhone}
+                            onChange={e => setForm({ ...form, contactPhone: e.target.value })}
+                            className="erp-form-input pl-10!"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
 
               {modalTab === 'address' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Billing Address Line 1
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <MapPin className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        placeholder="e.g. 12-A Main Boulevard, Gulberg III"
-                        value={form.addressLine1}
-                        onChange={e => setForm({ ...form, addressLine1: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
+                <div className="space-y-5">
+                  <div className="erp-form-card space-y-4">
+                    <div className="border-b border-[var(--color-border)] pb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-sky-500" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-strong)]">Billing & Physical Address</h4>
+                      </div>
+                      <span className="text-[11px] text-[var(--color-text-muted)] font-medium">Step 2 of 5</span>
                     </div>
-                  </div>
 
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Address Line 2 (Optional)
-                    </label>
-                    <input
-                      placeholder="Floor 2, Office # 204"
-                      value={form.addressLine2}
-                      onChange={e => setForm({ ...form, addressLine2: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    />
-                  </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="md:col-span-2">
+                        <label className="erp-form-label">Street Address Line 1</label>
+                        <div className="relative">
+                          <MapPin className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            placeholder="e.g. 12-A Main Boulevard, Gulberg III"
+                            value={form.addressLine1}
+                            onChange={e => setForm({ ...form, addressLine1: e.target.value })}
+                            className="erp-form-input pl-10!"
+                          />
+                        </div>
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      City
-                    </label>
-                    <input
-                      placeholder="Lahore"
-                      value={form.city}
-                      onChange={e => setForm({ ...form, city: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    />
-                  </div>
+                      <div className="md:col-span-2">
+                        <label className="erp-form-label">Suite / Unit / Floor (Optional)</label>
+                        <input
+                          placeholder="Floor 2, Office # 204"
+                          value={form.addressLine2}
+                          onChange={e => setForm({ ...form, addressLine2: e.target.value })}
+                          className="erp-form-input"
+                        />
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      State / Province / Region
-                    </label>
-                    <input
-                      placeholder="Punjab"
-                      value={form.state}
-                      onChange={e => setForm({ ...form, state: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    />
-                  </div>
+                      <div>
+                        <label className="erp-form-label">City</label>
+                        <input
+                          placeholder="Lahore / Dubai / London"
+                          value={form.city}
+                          onChange={e => setForm({ ...form, city: e.target.value })}
+                          className="erp-form-input"
+                        />
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Postal Code / ZIP
-                    </label>
-                    <input
-                      placeholder="54000"
-                      value={form.postalCode}
-                      onChange={e => setForm({ ...form, postalCode: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    />
-                  </div>
+                      <div>
+                        <label className="erp-form-label">State / Province / Region</label>
+                        <input
+                          placeholder="Punjab / Dubai"
+                          value={form.state}
+                          onChange={e => setForm({ ...form, state: e.target.value })}
+                          className="erp-form-input"
+                        />
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Country
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Globe className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <select
-                        value={form.country}
-                        onChange={e => setForm({ ...form, country: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent text-xs text-[var(--color-text-strong)] cursor-pointer"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      >
-                        {COUNTRIES.map(country => (
-                          <option key={country} value={country} className="bg-[var(--color-surface)] text-[var(--color-text-strong)]">
-                            {country}
-                          </option>
-                        ))}
-                      </select>
+                      <div>
+                        <label className="erp-form-label">Postal / ZIP Code</label>
+                        <input
+                          placeholder="54000"
+                          value={form.postalCode}
+                          onChange={e => setForm({ ...form, postalCode: e.target.value })}
+                          className="erp-form-input font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">Country</label>
+                        <div className="relative">
+                          <Globe className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <select
+                            value={form.country}
+                            onChange={e => setForm({ ...form, country: e.target.value })}
+                            className="erp-form-select pl-10! font-medium"
+                          >
+                            {COUNTRIES.map(country => (
+                              <option key={country} value={country}>
+                                {country}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
 
               {modalTab === 'financial' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Default Currency
-                    </label>
-                    <select
-                      value={form.currencyCode}
-                      onChange={e => setForm({ ...form, currencyCode: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      {['PKR', 'USD', 'AED', 'SAR', 'GBP', 'EUR', 'CAD', 'AUD'].map(curr => (
-                        <option key={curr} value={curr}>
-                          {curr}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
-                      Invoices for this customer will record amounts in this currency.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Credit Limit ({form.currencyCode})
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <span className="text-[11px] font-bold font-mono text-[var(--color-text-muted)] shrink-0 px-1.5 py-0.5 rounded bg-[var(--color-surface-muted)]">
-                        {form.currencyCode === 'PKR' ? 'Rs' : form.currencyCode === 'USD' ? '$' : form.currencyCode === 'EUR' ? '€' : form.currencyCode === 'GBP' ? '£' : form.currencyCode}
-                      </span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="500000"
-                        value={form.creditLimit}
-                        onChange={e => setForm({ ...form, creditLimit: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent font-mono text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
+                <div className="space-y-5">
+                  <div className="erp-form-card space-y-4">
+                    <div className="border-b border-[var(--color-border)] pb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-emerald-500" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-strong)]">Payment Terms & Credit Settings</h4>
+                      </div>
+                      <span className="text-[11px] text-[var(--color-text-muted)] font-medium">Step 3 of 5</span>
                     </div>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
-                      Max outstanding trade receivables allowed before warning.
-                    </p>
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Payment Terms (Net Days)
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Calendar className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        type="number"
-                        placeholder="30"
-                        value={form.paymentTermsDays}
-                        onChange={e => setForm({ ...form, paymentTermsDays: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="erp-form-label">Default Billing Currency</label>
+                        <select
+                          value={form.currencyCode}
+                          onChange={e => setForm({ ...form, currencyCode: e.target.value })}
+                          className="erp-form-select font-bold"
+                        >
+                          {['PKR', 'USD', 'AED', 'SAR', 'GBP', 'EUR', 'CAD', 'AUD'].map(curr => (
+                            <option key={curr} value={curr}>
+                              {curr}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
+                          Invoices for this customer default to this currency.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">
+                          Max Credit Limit ({form.currencyCode})
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold font-mono text-[var(--color-text-muted)]">
+                            {form.currencyCode}
+                          </span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="500000"
+                            value={form.creditLimit}
+                            onChange={e => setForm({ ...form, creditLimit: e.target.value })}
+                            className="erp-form-input pl-14! font-mono font-bold"
+                          />
+                        </div>
+                        <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
+                          Maximum outstanding trade receivables allowed before warning.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="erp-form-label">
+                          Payment Terms (Net Days)
+                        </label>
+                        <div className="relative">
+                          <Calendar className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="number"
+                            placeholder="30"
+                            value={form.paymentTermsDays}
+                            onChange={e => setForm({ ...form, paymentTermsDays: e.target.value })}
+                            className="erp-form-input pl-10! font-mono"
+                          />
+                        </div>
+                        <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
+                          Default invoice due date offset (e.g. 30 = Net 30 days).
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
-                      Default invoice due date offset (e.g. 30 = Net 30 days).
-                    </p>
                   </div>
                 </div>
               )}
 
               {modalTab === 'tax' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
-                      Tax Registration / VAT ID / NTN
-                    </label>
-                    <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
-                      <Receipt className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                      <input
-                        placeholder="e.g. 1234567-8 (FBR NTN / STRN) or TRN"
-                        value={form.taxId}
-                        onChange={e => setForm({ ...form, taxId: e.target.value })}
-                        className="w-full h-full border-0 outline-none bg-transparent font-mono text-xs text-[var(--color-text-strong)] placeholder:text-[var(--color-text-muted)]"
-                        style={{ border: 0, outline: 'none', padding: 0, background: 'transparent' }}
-                      />
+                <div className="space-y-5">
+                  <div className="erp-form-card space-y-4">
+                    <div className="border-b border-[var(--color-border)] pb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Receipt className="w-4 h-4 text-amber-500" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-strong)]">Tax Compliance & Registration</h4>
+                      </div>
+                      <span className="text-[11px] text-[var(--color-text-muted)] font-medium">Step 4 of 5</span>
                     </div>
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
-                      Required for automated B2B e-invoicing compliance (FBR, ZATCA, EU VAT).
-                    </p>
-                  </div>
 
-                  <div className="md:col-span-2 p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/60 text-xs text-[var(--color-text-muted)]">
-                    <p className="font-semibold text-[var(--color-text-strong)] flex items-center gap-1.5 mb-1.5">
-                      <ShieldCheck className="w-4 h-4 text-emerald-500" /> Compliance Note
-                    </p>
-                    <p className="text-[11px] leading-relaxed">
-                      This customer will inherit tax rates and rules based on their assigned country ({form.country || 'Global'}) and corporate entity.
-                    </p>
+                    <div>
+                      <label className="erp-form-label">
+                        Tax Registration ID / NTN / VAT TRN
+                      </label>
+                      <div className="relative">
+                        <Receipt className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          placeholder="e.g. 1234567-8 (FBR NTN/STRN) or TRN"
+                          value={form.taxId}
+                          onChange={e => setForm({ ...form, taxId: e.target.value })}
+                          className="erp-form-input pl-10! font-mono font-semibold"
+                        />
+                      </div>
+                      <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
+                        Required for automated B2B e-invoicing compliance (FBR, ZATCA, EU VAT).
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-xs text-[var(--color-text-muted)] flex items-start gap-2.5">
+                      <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-[var(--color-text-strong)] mb-0.5">Automated Global Tax Rules</p>
+                        <p className="text-[11px] leading-relaxed">
+                          Invoices for this customer inherit tax jurisdiction rates based on their country ({form.country || 'Pakistan'}) and assigned company entity.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -971,23 +985,14 @@ export default function CustomerManagement({
                 <span>{modalTab === 'preview' ? 'Ready for final verification & creation' : 'Auto-draft protection active'}</span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
                 <button
                   type="button"
-                  className="h-8.5 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors"
+                  className="h-9 min-h-[36px] px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors whitespace-nowrap leading-none flex items-center justify-center shrink-0"
                   onClick={() => setModalOpen(false)}
                 >
                   Cancel
                 </button>
-                {modalTab !== 'preview' && (
-                  <button
-                    type="button"
-                    className="h-8.5 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-strong)] transition-colors"
-                    onClick={(e) => { e.preventDefault(); saveDraft(); notify('Customer draft saved locally.'); }}
-                  >
-                    Save Draft
-                  </button>
-                )}
 
                 {modalTab !== 'general' && (
                   <button
@@ -998,15 +1003,16 @@ export default function CustomerManagement({
                       else if (modalTab === 'financial') setModalTab('address')
                       else if (modalTab === 'address') setModalTab('general')
                     }}
-                    className="h-8.5 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors flex items-center gap-1"
+                    className="h-9 min-h-[36px] px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap leading-none shrink-0"
                   >
-                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
                     <span>{modalTab === 'preview' ? 'Back to Edit' : 'Back'}</span>
                   </button>
                 )}
 
                 {modalTab !== 'preview' ? (
                   <button
+                    key="btn-modal-next"
                     type="button"
                     onClick={() => {
                       if (modalTab === 'general') {
@@ -1023,19 +1029,21 @@ export default function CustomerManagement({
                         setModalTab('preview')
                       }
                     }}
-                    className="primary h-8.5 px-4 rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5"
+                    className="h-9 min-h-[36px] px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap leading-none shrink-0"
                   >
                     <span>
-                      {modalTab === 'general' ? 'Next: Address & Location' : modalTab === 'address' ? 'Next: Terms & Financials' : modalTab === 'financial' ? 'Next: Tax & Compliance' : 'Preview & Review'}
+                      {modalTab === 'general' ? 'Next: Address & Location' : modalTab === 'address' ? 'Next: Terms & Financials' : modalTab === 'financial' ? 'Next: Tax & Compliance' : 'Preview Customer'}
                     </span>
-                    {modalTab === 'tax' ? <Eye className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                    {modalTab === 'tax' ? <Eye className="w-3.5 h-3.5 shrink-0" /> : <ArrowRight className="w-3.5 h-3.5 shrink-0" />}
                   </button>
                 ) : (
                   <button
-                    type="submit"
-                    className="primary h-8.5 px-5 rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    key="btn-modal-confirm"
+                    type="button"
+                    onClick={handleConfirmSave}
+                    className="h-9 min-h-[36px] px-5 rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white whitespace-nowrap leading-none shrink-0"
                   >
-                    <Check className="w-3.5 h-3.5" />
+                    <Check className="w-3.5 h-3.5 shrink-0" />
                     <span>{editingCustomer ? 'Confirm & Save Changes' : 'Confirm & Create Customer'}</span>
                   </button>
                 )}

@@ -4,12 +4,16 @@ import {
   CheckCircle2, Hash, Users, Truck, Eye, XCircle,
   FileText, ArrowUpRight, TrendingUp
 } from 'lucide-react'
-import { useSalesOrdersStore, useCustomersStore, useProductsStore } from './stores'
+import { useSalesOrdersStore, useCustomersStore, useProductsStore, useAssetsInventoryStore } from './stores'
 import { useFormDraft } from './hooks/useFormDraft'
 import { DataToolbar } from '@/components/ui/data-toolbar'
 import { money } from './lib/currency'
 import { StatusChip } from './components/ui/status-chip'
 import { EmptyState, TableSkeleton } from './components/ui/empty-state'
+import { getActiveTaxCodes } from './lib/taxLocalization'
+import { CompactTaxSelect } from './components/CompactTaxSelect'
+import { CompactProductSelect } from './components/CompactProductSelect'
+import { CompactSelect } from './components/CompactSelect'
 
 const statusStyles: Record<string, { label: string; hex: string }> = {
   Draft: { label: 'Draft', hex: '#94a3b8' },
@@ -22,6 +26,7 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
   activeEntityId,
   entities = []
 }) => {
+  const applicableTaxCodes = useMemo(() => getActiveTaxCodes(), [activeEntityId])
   const orders = useSalesOrdersStore(s => s.orders)
   const fetchOrders = useSalesOrdersStore(s => s.fetchOrders)
   const createOrder = useSalesOrdersStore(s => s.createOrder)
@@ -34,6 +39,12 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
 
   const products = useProductsStore(s => s.products)
   const fetchProducts = useProductsStore(s => s.fetchProducts)
+
+  const warehouses = useAssetsInventoryStore(s => s.warehouses)
+  const fetchWarehouses = useAssetsInventoryStore(s => s.fetchWarehouses)
+  const stockLevels = useAssetsInventoryStore(s => s.stockLevels)
+  const fetchStockLevels = useAssetsInventoryStore(s => s.fetchStockLevels)
+  const createStockTransaction = useAssetsInventoryStore(s => s.createStockTransaction)
 
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -54,7 +65,7 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
   })
 
   const [lines, setLines] = useState<any[]>([
-    { productId: '', description: '', quantity: '1', unitPrice: '0', discountAmount: '0', taxAmount: '0' }
+    { productId: '', description: '', quantity: '1', unitPrice: '0', discountAmount: '0', taxAmount: '0', warehouseId: '' }
   ])
 
   const { saveDraft, clearDraft } = useFormDraft('sales_order', { form, lines }, (saved: any) => {
@@ -69,6 +80,8 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
         fetchOrders(activeEntityId),
         fetchCustomers(activeEntityId),
         fetchProducts(),
+        fetchWarehouses(activeEntityId),
+        fetchStockLevels(activeEntityId),
       ])
     } catch {}
     setLoading(false)
@@ -89,7 +102,7 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
       customerId: customers[0]?.id || '',
       orderDate: new Date().toISOString().slice(0, 10),
       expectedDeliveryDate: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
-      reference: nextRef || 'SO-0001',
+      reference: nextRef || 'SO-00001',
       notes: 'Please expedite delivery according to schedule.',
       terms: 'Standard commercial delivery terms apply.',
       currencyCode: 'PKR'
@@ -100,7 +113,7 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
   }
 
   const addLine = () =>
-    setLines([...lines, { productId: '', description: '', quantity: '1', unitPrice: '0', discountAmount: '0', taxAmount: '0' }])
+    setLines([...lines, { productId: '', description: '', quantity: '1', unitPrice: '0', discountAmount: '0', taxAmount: '0', warehouseId: '' }])
 
   const removeLine = (i: number) => setLines(lines.filter((_, idx) => idx !== i))
 
@@ -150,7 +163,8 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
         quantity: parseFloat(l.quantity || '1'),
         unitPrice: parseFloat(l.unitPrice || '0'),
         discountAmount: parseFloat(l.discountAmount || '0'),
-        taxAmount: parseFloat(l.taxAmount || '0')
+        taxAmount: parseFloat(l.taxAmount || '0'),
+        warehouseId: l.warehouseId || undefined
       }))
     }
 
@@ -167,8 +181,26 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
 
   const handleConfirm = async (id: string) => {
     try {
+      const order = orders.find((o: any) => o.id === id)
+      if (order?.lines) {
+        for (const line of order.lines) {
+          const qty = Number(line.quantity) || 0
+          const whId = (line as any).warehouseId
+          if (qty > 0 && whId) {
+            await createStockTransaction({
+              productId: line.productId,
+              warehouseId: whId,
+              type: 'Out',
+              quantity: qty,
+              unitCost: Number(line.unitPrice) || 0,
+              reference: `SO-${order.orderNumber || id}`,
+              entityId: activeEntityId
+            })
+          }
+        }
+      }
       await updateOrderStatus(id, 'Confirmed')
-      notify('✓ Sales Order confirmed.')
+      notify('✓ Sales Order confirmed. Inventory deducted.')
       loadData()
     } catch (err: any) {
       notify(err.message || 'Error confirming order')
@@ -198,18 +230,29 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
   }
 
   const filteredOrders = useMemo(() => {
-    return orders.filter(o => {
-      const cust = customers.find(c => c.id === o.customerId)
-      const matchesQuery = !query.trim()
-        ? true
-        : `${o.orderNumber} ${o.reference || ''} ${cust?.name || ''}`
-            .toLowerCase()
-            .includes(query.toLowerCase())
+    return orders
+      .filter(o => {
+        const cust = customers.find(c => c.id === o.customerId)
+        const matchesQuery = !query.trim()
+          ? true
+          : `${o.orderNumber} ${o.reference || ''} ${cust?.name || ''}`
+              .toLowerCase()
+              .includes(query.toLowerCase())
 
-      const matchesStatus = statusFilter === 'all' || o.status.toLowerCase() === statusFilter.toLowerCase()
+        const matchesStatus = statusFilter === 'all' || o.status.toLowerCase() === statusFilter.toLowerCase()
 
-      return matchesQuery && matchesStatus
-    })
+        return matchesQuery && matchesStatus
+      })
+      .sort((a, b) => {
+        const dateA = a.orderDate || ''
+        const dateB = b.orderDate || ''
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA)
+        }
+        const numA = a.orderNumber || a.reference || ''
+        const numB = b.orderNumber || b.reference || ''
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' })
+      })
   }, [orders, customers, query, statusFilter])
 
   const metrics = useMemo(() => ({
@@ -503,18 +546,18 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
                     <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
                       <span className="text-rose-500 font-bold mr-1">*</span> Customer / Client
                     </label>
-                    <select
+                    <CompactSelect
                       value={form.customerId}
-                      onChange={e => setForm({ ...form, customerId: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      <option value="">Select customer...</option>
-                      {customers.map((c: any) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} {c.customerNumber ? `(${c.customerNumber})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={v => setForm({ ...form, customerId: v })}
+                      placeholder="Select customer..."
+                      searchPlaceholder="Search customer by name or code..."
+                      options={customers.map((c: any) => ({
+                        value: c.id,
+                        label: c.name,
+                        badge: c.customerNumber || undefined,
+                      }))}
+                      className="h-10 text-xs font-semibold"
+                    />
                   </div>
 
                   <div>
@@ -524,7 +567,7 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
                     <div className="flex items-center gap-2.5 h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-primary)] transition-colors shadow-2xs">
                       <Hash className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                       <input
-                        placeholder="e.g. SO-0001"
+                        placeholder="e.g. SO-00001"
                         value={form.reference}
                         onChange={e => setForm({ ...form, reference: e.target.value })}
                         className="w-full h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs outline-none"
@@ -580,16 +623,17 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
                   </div>
 
                   <div className="border border-[var(--color-border)] rounded-xl overflow-hidden shadow-2xs">
-                    <table className="w-full text-xs">
+                    <table className="w-full text-xs min-w-[900px]">
                       <thead className="bg-[var(--color-surface-muted)] text-[var(--color-text-muted)] font-semibold border-b border-[var(--color-border)]">
                         <tr>
-                          <th className="p-2.5 text-left">Product</th>
-                          <th className="p-2.5 text-left">Description</th>
-                          <th className="p-2.5 text-right w-16">Qty</th>
-                          <th className="p-2.5 text-right w-24">Price (Rs)</th>
-                          <th className="p-2.5 text-right w-28">Disc (Rs)</th>
-                          <th className="p-2.5 text-right w-28">Tax (Rs)</th>
-                          <th className="p-2.5 text-right w-24">Total</th>
+                          <th className="p-2.5 text-left w-[170px] min-w-[140px]">Product</th>
+                          <th className="p-2.5 text-left min-w-[180px]">Description</th>
+                          <th className="p-2.5 text-left w-[140px] min-w-[120px]">Warehouse</th>
+                          <th className="p-2.5 text-right w-16 min-w-[55px]">Qty</th>
+                          <th className="p-2.5 text-right w-36 min-w-[130px]">Price</th>
+                          <th className="p-2.5 text-right w-28 min-w-[90px]">Discount</th>
+                          <th className="p-2.5 text-center w-20 min-w-[70px]">Tax</th>
+                          <th className="p-2.5 text-right w-24 min-w-[85px]">Total</th>
                           <th className="p-2.5 w-8"></th>
                         </tr>
                       </thead>
@@ -597,30 +641,37 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
                         {lines.map((l, i) => (
                           <tr key={i} className="hover:bg-[var(--color-surface-muted)]/50">
                             <td className="p-2">
-                              <select
+                              <CompactProductSelect
                                 value={l.productId}
-                                onChange={e => updateLine(i, 'productId', e.target.value)}
+                                onChange={v => updateLine(i, 'productId', v)}
+                                products={products}
+                                filterPurpose={['FinishedGood', 'Service']}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                placeholder="Item description / details..."
+                                value={l.description}
+                                onChange={e => updateLine(i, 'description', e.target.value)}
+                                className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] outline-none"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <select
+                                value={l.warehouseId}
+                                onChange={e => updateLine(i, 'warehouseId', e.target.value)}
                                 className="w-full h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] outline-none"
                               >
-                                <option value="">Select Item...</option>
-                                {products.map((p: any) => (
-                                  <option key={p.id} value={p.id}>
-                                    {p.code} — {p.name}
-                                  </option>
+                                <option value="">Select...</option>
+                                {warehouses.map((w: any) => (
+                                  <option key={w.id} value={w.id}>{w.name}</option>
                                 ))}
                               </select>
                             </td>
                             <td className="p-2">
                               <input
-                                placeholder="Description"
-                                value={l.description}
-                                onChange={e => updateLine(i, 'description', e.target.value)}
-                                className="w-full h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] outline-none"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <input
                                 type="number"
+                                min="1"
                                 value={l.quantity}
                                 onChange={e => updateLine(i, 'quantity', e.target.value)}
                                 className="w-full h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-right font-mono text-[var(--color-text-strong)] outline-none"
@@ -645,12 +696,22 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
                               />
                             </td>
                             <td className="p-2">
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={l.taxAmount}
-                                onChange={e => updateLine(i, 'taxAmount', e.target.value)}
-                                className="w-full h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-right font-mono text-[var(--color-text-strong)] outline-none"
+                              <CompactTaxSelect
+                                value={(() => {
+                                  const match = applicableTaxCodes.find(tc => tc.code === l.taxCode);
+                                  return match ? match.rate : (applicableTaxCodes[0]?.rate ?? 0);
+                                })()}
+                                onChange={newRate => {
+                                  const match = applicableTaxCodes.find(tc => tc.rate === parseFloat(newRate)) || applicableTaxCodes[0];
+                                  const rate = match ? match.rate : 0;
+                                  const taxable = Math.max(0, (parseFloat(l.quantity || '0') * parseFloat(l.unitPrice || '0')) - parseFloat(l.discountAmount || '0'));
+                                  const taxVal = (taxable * rate) / 100;
+                                  const u = [...lines];
+                                  u[i].taxCode = match?.code || '';
+                                  u[i].taxAmount = String(taxVal);
+                                  setLines(u);
+                                }}
+                                taxCodes={applicableTaxCodes}
                               />
                             </td>
                             <td className="p-2 text-right font-mono font-semibold text-[var(--color-text-strong)]">
@@ -838,15 +899,6 @@ export const SalesOrdersWorkspace: React.FC<{ activeEntityId: string; entities?:
                 >
                   Cancel
                 </button>
-                {modalTab !== 'preview' && (
-                  <button
-                    type="button"
-                    className="h-9 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium hover:bg-[var(--color-surface-muted)] transition-colors"
-                    onClick={(e) => { e.preventDefault(); saveDraft(); notify('Order draft saved locally.'); }}
-                  >
-                    Save Draft
-                  </button>
-                )}
 
                 {modalTab !== 'details' && (
                   <button

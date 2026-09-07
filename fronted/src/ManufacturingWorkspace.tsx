@@ -15,6 +15,8 @@ import { downloadExcel, downloadCSV } from './lib/exportUtils';
 import ExportDropdown from './components/ExportDropdown';
 import { StatusChip } from './components/ui/status-chip';
 import { EmptyState } from './components/ui/empty-state';
+import { CompactProductSelect } from './components/CompactProductSelect';
+import { CompactSelect } from './components/CompactSelect';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -141,22 +143,32 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
     return workOrders.filter(w => {
       const matchQ = !query ||
         w.workOrderNumber?.toLowerCase().includes(query.toLowerCase()) ||
-        w.finishedProductName?.toLowerCase().includes(query.toLowerCase()) ||
+        (w.finishedProductName || (w as any).productName || '')?.toLowerCase().includes(query.toLowerCase()) ||
         w.machineAssetName?.toLowerCase().includes(query.toLowerCase()) ||
-        w.assignedTechnicianName?.toLowerCase().includes(query.toLowerCase());
+        (w as any).assignedTechnicianName?.toLowerCase().includes(query.toLowerCase());
 
       const matchStatus = statusFilter === 'All' || String(w.status) === statusFilter;
       const matchCenter = workCenterFilter === 'All' || w.workCenterName === workCenterFilter;
 
       return matchQ && matchStatus && matchCenter;
+    }).sort((a, b) => {
+      const dateA = (a as any).startDate || a.createdAt || '';
+      const dateB = (b as any).startDate || b.createdAt || '';
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
+      const numA = a.workOrderNumber || '';
+      const numB = b.workOrderNumber || '';
+      return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' });
     });
   }, [workOrders, query, statusFilter, workCenterFilter]);
 
   // ─── Actions ───────────────────────────────────────────────────────────────
   const handleSaveBom = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bomForm.finishedProductId || bomLines.length === 0) return alert('Finished product and at least one raw material line required.');
+    if (!bomForm.finishedProductId) return alert('Please select a finished good product.');
     const finishedProd = products.find(p => p.id === bomForm.finishedProductId);
+
     const body = {
       finishedProductId: bomForm.finishedProductId,
       finishedProductName: finishedProd?.name || '',
@@ -170,14 +182,14 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
         return {
           rawMaterialProductId: l.rawMaterialProductId,
           rawMaterialProductName: rawMat?.name || '',
-          unitOfMeasure: (rawMat as any)?.unitOfMeasure || rawMat?.unit || 'Pcs',
+          unitOfMeasure: (rawMat as any)?.unitOfMeasure || (rawMat as any)?.unit || 'Pcs',
           quantityRequired: parseFloat(l.quantityRequired) || 1,
           wastePercentage: parseFloat(l.wastePercentage || '0')
         };
       })
     };
     try {
-      await createBomStore(body);
+      await createBomStore(body as any);
       notify('✓ Bill of Materials (BOM) recipe created!');
       setShowBomModal(false);
       setBomLines([{ rawMaterialProductId: '', quantityRequired: '1', wastePercentage: '0' }]);
@@ -219,7 +231,7 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
       })) || []
     };
     try {
-      await createWorkOrderStore(body);
+      await createWorkOrderStore(body as any);
       notify('✓ Work Order released to Shop Floor!');
       setShowWoModal(false);
       fetchAllManufacturing(activeEntityId);
@@ -244,7 +256,7 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
     try {
       const hours = parseFloat(machineHoursForm.additionalHours) || 0;
       const rate = parseFloat(machineHoursForm.hourlyRate) || 35;
-      await manufacturingApi.logMachineHours(machineHoursModalWo.id, hours, rate);
+      await (manufacturingApi as any).logMachineHours(machineHoursModalWo.id, hours, rate);
       notify(`✓ Logged ${hours} machine run hours into Fixed Assets meter & absorbed overhead.`);
       setMachineHoursModalWo(null);
       fetchAllManufacturing(activeEntityId);
@@ -258,11 +270,11 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
     e.preventDefault();
     if (!qcModalWo) return;
     try {
-      const inspected = parseFloat(qcForm.quantityInspected) || qcModalWo.quantityToProduce;
+      const inspected = parseFloat(qcForm.quantityInspected) || (qcModalWo.quantityToProduce || 0);
       const passed = parseFloat(qcForm.quantityPassed) || inspected;
       const rejected = parseFloat(qcForm.quantityRejected) || 0;
 
-      await manufacturingApi.performQcInspection(qcModalWo.id, {
+      await (manufacturingApi as any).performQcInspection(qcModalWo.id, {
         workOrderId: qcModalWo.id,
         inspectorName: qcForm.inspectorName,
         quantityInspected: inspected,
@@ -285,11 +297,11 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
     e.preventDefault();
     if (!completeModalWo) return;
     try {
-      const actualQty = parseFloat(completeForm.actualProducedQty) || completeModalWo.acceptedQuantity || completeModalWo.quantityToProduce;
-      const labor = parseFloat(completeForm.directLabor) || completeModalWo.directLaborCost;
-      const overhead = parseFloat(completeForm.overhead) || completeModalWo.overheadCost;
+      const actualQty = parseFloat(completeForm.actualProducedQty) || completeModalWo.acceptedQuantity || (completeModalWo.quantityToProduce || 0);
+      const labor = parseFloat(completeForm.directLabor) || (completeModalWo.directLaborCost || 0);
+      const overhead = parseFloat(completeForm.overhead) || (completeModalWo.overheadCost || 0);
 
-      await manufacturingApi.completeWorkOrder(completeModalWo.id, {
+      await (manufacturingApi as any).completeWorkOrder(completeModalWo.id, {
         actualProducedQty: actualQty,
         directLabor: labor,
         overhead: overhead
@@ -313,15 +325,15 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
     doc.text(`Active Jobs: ${activeJobsCount} | WIP Valuation: ${money(totalWipValuation)} | As of ${new Date().toLocaleDateString()}`, 14, 22);
 
     const tableData = filteredWorkOrders.map(w => [
-      w.workOrderNumber,
-      w.finishedProductName,
+      w.workOrderNumber || '',
+      w.finishedProductName || (w as any).productName || '',
       w.workCenterName || 'Shop Floor',
       w.machineAssetName || 'N/A',
-      `${w.quantityProduced || 0} / ${w.quantityToProduce}`,
+      `${w.quantityProduced || 0} / ${w.quantityToProduce || (w as any).quantityOrdered || 0}`,
       money(w.totalMaterialCost || 0),
       money(w.directLaborCost || 0),
       money(w.overheadCost || 0),
-      money(w.totalCost || 0),
+      money(w.totalCost || (w as any).totalActualCost || 0),
       money(w.unitCost || 0),
       String(w.status),
     ]);
@@ -803,17 +815,12 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="font-bold text-[var(--color-text-strong)]">Finished Product to Produce</label>
-                  <select
-                    required
+                  <CompactProductSelect
                     value={bomForm.finishedProductId}
-                    onChange={e => setBomForm(f => ({ ...f, finishedProductId: e.target.value }))}
-                    className="w-full px-3 py-2 bg-[var(--color-surface-muted)] border border-[var(--color-border)] rounded-xl outline-none"
-                  >
-                    <option value="">Select Finished Product...</option>
-                    {products.map(p => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
-                    ))}
-                  </select>
+                    onChange={v => setBomForm(f => ({ ...f, finishedProductId: v }))}
+                    products={products}
+                    placeholder="Select Finished Product..."
+                  />
                 </div>
 
                 <div className="space-y-1">
@@ -844,21 +851,16 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
                 {bomLines.map((line, idx) => (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-center">
                     <div className="col-span-6">
-                      <select
-                        required
+                      <CompactProductSelect
                         value={line.rawMaterialProductId}
-                        onChange={e => {
+                        onChange={v => {
                           const updated = [...bomLines];
-                          updated[idx].rawMaterialProductId = e.target.value;
+                          updated[idx].rawMaterialProductId = v;
                           setBomLines(updated);
                         }}
-                        className="w-full px-3 py-2 bg-[var(--color-surface-muted)] border border-[var(--color-border)] rounded-xl outline-none"
-                      >
-                        <option value="">Select Raw Material...</option>
-                        {products.map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
+                        products={products}
+                        placeholder="Select Raw Material..."
+                      />
                     </div>
 
                     <div className="col-span-3">
@@ -939,17 +941,18 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="font-bold text-[var(--color-text-strong)]">BOM Recipe</label>
-                  <select
-                    required
+                  <CompactSelect
                     value={woForm.bomId}
-                    onChange={e => setWoForm(f => ({ ...f, bomId: e.target.value }))}
-                    className="w-full px-3 py-2 bg-[var(--color-surface-muted)] border border-[var(--color-border)] rounded-xl outline-none font-semibold"
-                  >
-                    <option value="">Select BOM Recipe...</option>
-                    {boms.map(b => (
-                      <option key={b.id} value={b.id}>{b.finishedProductName} ({b.bomNumber})</option>
-                    ))}
-                  </select>
+                    onChange={v => setWoForm(f => ({ ...f, bomId: v }))}
+                    placeholder="Select BOM Recipe..."
+                    searchPlaceholder="Search BOM recipe..."
+                    options={boms.map(b => ({
+                      value: b.id,
+                      label: b.finishedProductName,
+                      badge: b.bomNumber
+                    }))}
+                    className="h-10 text-xs font-semibold"
+                  />
                 </div>
 
                 <div className="space-y-1">
@@ -985,16 +988,19 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
 
                   <div className="space-y-1">
                     <label className="font-bold text-[var(--color-text-strong)]">Assign Plant Machine (from Fixed Assets)</label>
-                    <select
+                    <CompactSelect
                       value={woForm.machineAssetId}
-                      onChange={e => setWoForm(f => ({ ...f, machineAssetId: e.target.value }))}
-                      className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl outline-none"
-                    >
-                      <option value="">Select Machine...</option>
-                      {machines.map(m => (
-                        <option key={m.id} value={m.id}>{m.assetTag} — {m.name} ({m.machineHealth || 'Operating'})</option>
-                      ))}
-                    </select>
+                      onChange={v => setWoForm(f => ({ ...f, machineAssetId: v }))}
+                      placeholder="Select Machine..."
+                      searchPlaceholder="Search machine by tag or name..."
+                      clearLabel="-- No Machine Assigned --"
+                      options={machines.map(m => ({
+                        value: m.id,
+                        label: `${m.assetTag} — ${m.name}`,
+                        badge: String(m.machineHealth || 'Operating')
+                      }))}
+                      className="h-10 text-xs"
+                    />
                   </div>
                 </div>
               </div>
@@ -1003,32 +1009,34 @@ export const ManufacturingWorkspace: React.FC<{ activeEntityId: string; entities
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="font-bold text-[var(--color-text-strong)]">Raw Materials Source Warehouse</label>
-                  <select
-                    required
+                  <CompactSelect
                     value={woForm.rawMaterialWarehouseId}
-                    onChange={e => setWoForm(f => ({ ...f, rawMaterialWarehouseId: e.target.value }))}
-                    className="w-full px-3 py-2 bg-[var(--color-surface-muted)] border border-[var(--color-border)] rounded-xl outline-none"
-                  >
-                    <option value="">Select Warehouse...</option>
-                    {warehouses.map(w => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
-                    ))}
-                  </select>
+                    onChange={v => setWoForm(f => ({ ...f, rawMaterialWarehouseId: v }))}
+                    placeholder="Select Warehouse..."
+                    searchPlaceholder="Search warehouse..."
+                    options={warehouses.map(w => ({
+                      value: w.id,
+                      label: w.name,
+                      badge: 'Warehouse'
+                    }))}
+                    className="h-10 text-xs"
+                  />
                 </div>
 
                 <div className="space-y-1">
                   <label className="font-bold text-[var(--color-text-strong)]">Finished Goods Target Warehouse</label>
-                  <select
-                    required
+                  <CompactSelect
                     value={woForm.finishedGoodsWarehouseId}
-                    onChange={e => setWoForm(f => ({ ...f, finishedGoodsWarehouseId: e.target.value }))}
-                    className="w-full px-3 py-2 bg-[var(--color-surface-muted)] border border-[var(--color-border)] rounded-xl outline-none"
-                  >
-                    <option value="">Select Warehouse...</option>
-                    {warehouses.map(w => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
-                    ))}
-                  </select>
+                    onChange={v => setWoForm(f => ({ ...f, finishedGoodsWarehouseId: v }))}
+                    placeholder="Select Warehouse..."
+                    searchPlaceholder="Search warehouse..."
+                    options={warehouses.map(w => ({
+                      value: w.id,
+                      label: w.name,
+                      badge: 'Warehouse'
+                    }))}
+                    className="h-10 text-xs"
+                  />
                 </div>
               </div>
 

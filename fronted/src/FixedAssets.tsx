@@ -210,6 +210,10 @@ export const FixedAssets: React.FC<{ activeEntityId: string }> = ({ activeEntity
         (allocationFilter === 'Admin' && a.costAllocation !== 'ManufacturingOverhead');
 
       return matchQuery && matchCat && matchStatus && matchAlloc;
+    }).sort((a, b) => {
+      const tagA = a.assetTag || (a as any).code || a.name || '';
+      const tagB = b.assetTag || (b as any).code || b.name || '';
+      return tagA.localeCompare(tagB, undefined, { numeric: true, sensitivity: 'base' });
     });
   }, [assets, query, categoryFilter, statusFilter, allocationFilter]);
 
@@ -268,12 +272,25 @@ export const FixedAssets: React.FC<{ activeEntityId: string }> = ({ activeEntity
     return lines;
   }, [procurementBills, procurementOrders]);
 
+  const getNextAssetTag = (allAssets: any[] = []): string => {
+    let maxSeq = 0;
+    for (const a of allAssets) {
+      if (!a?.assetTag) continue;
+      const match = a.assetTag.match(/AST-(\d+)/i) || a.assetTag.match(/AST-\d{4}-(\d+)/i);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxSeq && num < 1000000) maxSeq = num;
+      }
+    }
+    return `AST-${String(maxSeq + 1).padStart(5, '0')}`;
+  };
+
   // ─── Modal Openers ─────────────────────────────────────────────────────────
   const openCreateModal = (prefill?: Partial<typeof assetForm>) => {
     setError('');
     setEditingAsset(null);
     setAssetForm({
-      assetTag: `AST-${new Date().getFullYear()}-${String(Math.floor(1000 + Math.random() * 9000))}`,
+      assetTag: prefill?.assetTag || getNextAssetTag(assets),
       name: prefill?.name || '',
       description: prefill?.description || '',
       category: prefill?.category || ASSET_CATEGORIES[0],

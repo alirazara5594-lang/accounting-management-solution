@@ -19,10 +19,37 @@ import type {
   JobCosting,
   ProductionSchedule,
   SubcontractOrder,
+  SubcontractOrderLine,
   ManufacturingFilters,
   ManufacturingKpis,
   Product,
 } from '@/types/manufacturing';
+
+export type {
+  Bom,
+  Bom as BillOfMaterials,
+  BomLine,
+  Routing,
+  RoutingOperation,
+  WorkOrder,
+  WorkOrderLine,
+  WorkOrderOperation,
+  WorkOrderCompletion,
+  MaterialIssue,
+  MaterialIssueLine,
+  LaborEntry,
+  MachineTimeEntry,
+  QcInspection,
+  QcSpecification,
+  QcMeasurement,
+  WorkCenter,
+  JobCosting,
+  ProductionSchedule,
+  SubcontractOrder,
+  SubcontractOrderLine,
+  ManufacturingFilters,
+  ManufacturingKpis,
+};
 
 const BASE = '/manufacturing';
 
@@ -209,7 +236,7 @@ export const manufacturingApi = {
   },
 
   printPickList: async (issueId: string): Promise<Blob> => {
-    return apiClient<Blob>(`${BASE}/material-issues/${issueId}/pick-list`, { method: 'GET', responseType: 'blob' });
+    return (apiClient as any)(`${BASE}/material-issues/${issueId}/pick-list`, { method: 'GET', responseType: 'blob' });
   },
 
   // ==================== Labor & Machine Time ====================

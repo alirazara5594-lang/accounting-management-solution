@@ -7,6 +7,7 @@ import { DataToolbar } from '@/components/ui/data-toolbar';
 import { KpiCard, KpiGrid } from './components/ui/kpi-card';
 import { StatusChip } from './components/ui/status-chip';
 import { EmptyState, TableSkeleton } from './components/ui/empty-state';
+import { CompactSelect } from './components/CompactSelect';
 import type { Entity } from './EntitySettings';
 
 interface ArInvoice {
@@ -58,17 +59,35 @@ export const AccountsReceivableView: React.FC<AccountsReceivableViewProps> = ({ 
   useEffect(() => { load(); }, [activeEntityId]);
 
   const filtered = useMemo(() => {
-    return invoices.filter(i => {
-      if (statusFilter !== 'All' && i.status !== statusFilter) return false;
-      if (query.trim()) {
-        const q = query.toLowerCase();
-        if (!i.customerName.toLowerCase().includes(q) && !i.invoiceNumber.toLowerCase().includes(q)) return false;
-      }
-      return true;
-    });
+    return invoices
+      .filter(i => {
+        if (i.status === 'Draft' || i.status === 'Void') return false;
+        if (statusFilter !== 'All') {
+          if (statusFilter === 'Unpaid' && i.status !== 'Sent' && i.status !== 'Overdue') return false;
+          else if (statusFilter === 'PartiallyPaid' && i.status !== 'PartiallyPaid') return false;
+          else if (statusFilter === 'Paid' && i.status !== 'Paid') return false;
+          else if (statusFilter !== 'Unpaid' && statusFilter !== 'PartiallyPaid' && statusFilter !== 'Paid' && i.status !== statusFilter) return false;
+        }
+        if (query.trim()) {
+          const q = query.toLowerCase();
+          if (!i.customerName.toLowerCase().includes(q) && !i.invoiceNumber.toLowerCase().includes(q)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const dateA = a.date || a.dueDate || '';
+        const dateB = b.date || b.dueDate || '';
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA);
+        }
+        const numA = a.invoiceNumber || '';
+        const numB = b.invoiceNumber || '';
+        return numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' });
+      });
   }, [invoices, query, statusFilter]);
 
-  const totalDue = invoices.reduce((s, i) => s + (i.amountDue || 0), 0);
+  const activeInvoices = useMemo(() => invoices.filter(i => i.status !== 'Draft' && i.status !== 'Void'), [invoices]);
+  const totalDue = useMemo(() => activeInvoices.reduce((s, i) => s + (i.amountDue || 0), 0), [activeInvoices]);
 
   const exportHeaders = ['Invoice #', 'Customer', 'Date', 'Due Date', 'Total', 'Paid', 'Due', 'Status'];
   const exportRows = filtered.map(i => [i.invoiceNumber, i.customerName, i.date, i.dueDate, i.totalAmount, i.amountPaid, i.amountDue, i.status]);
@@ -121,12 +140,18 @@ export const AccountsReceivableView: React.FC<AccountsReceivableViewProps> = ({ 
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <Input placeholder="Search customer, invoice #..." value={query} onChange={e => setQuery(e.target.value)} className="pl-9 h-9 bg-white text-xs" />
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 outline-none">
-          <option value="All">All Statuses</option>
-          <option value="Unpaid">Unpaid</option>
-          <option value="PartiallyPaid">Partially Paid</option>
-          <option value="Paid">Paid</option>
-        </select>
+        <CompactSelect
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: 'All', label: 'All Statuses' },
+            { value: 'Unpaid', label: 'Unpaid' },
+            { value: 'PartiallyPaid', label: 'Partially Paid' },
+            { value: 'Paid', label: 'Paid' },
+          ]}
+          placeholder="Filter status..."
+          className="w-40 h-9"
+        />
       </div>
 
       {loading && <TableSkeleton rows={6} />}

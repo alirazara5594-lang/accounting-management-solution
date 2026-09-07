@@ -261,16 +261,28 @@ export default function UniqueSidebar({
           })}
         </nav>
 
-        {/* User Footer with Written Log Out */}
+        {/* User Profile & Logout Footer */}
         <div className="unique-sidebar-footer">
-          <button
-            className="unique-logout-text-btn"
-            onClick={onLogout}
-            title="Sign out of AMS ERP"
-          >
-            <LogOut size={13} strokeWidth={2.2} />
-            <span>Log Out</span>
-          </button>
+          <div className="unique-user-card">
+            <div className="unique-user-avatar">
+              {currentUser?.avatar || 'MA'}
+            </div>
+            <div className="unique-user-info">
+              <span className="unique-user-name" title={currentUser?.fullName || 'Muhammad Ali'}>
+                {currentUser?.fullName || 'Muhammad Ali'}
+              </span>
+              <span className="unique-user-role">
+                {currentUser?.role || 'Finance admin'}
+              </span>
+            </div>
+            <button
+              className="unique-user-logout-btn"
+              onClick={onLogout}
+              title="Sign out of AMS ERP"
+            >
+              <LogOut size={13} strokeWidth={2.2} />
+            </button>
+          </div>
         </div>
       </aside>
 

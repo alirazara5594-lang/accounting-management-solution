@@ -355,6 +355,14 @@ public class PayrollController : ControllerBase
         return Ok(new { payrun, slips, employeeCount = slips.Count, totalGross = slips.Sum(s => s.GrossEarnings), totalDeductions = slips.Sum(s => s.TotalDeductions), totalNet = slips.Sum(s => s.NetPay) });
     }
 
+    [HttpPost("payruns/{id}/post-to-gl")]
+    public ActionResult<object> PostPayrunToGL(Guid id)
+    {
+        if (!_store.PostPayrunToGL(id, out var journalEntry, out var error))
+            return BadRequest(new { error });
+        return Ok(new { success = true, journalEntry, message = "Payrun posted to General Ledger successfully." });
+    }
+
     // ── Salary Slips ──────────────────────────────────────────────────────────
     [HttpGet("salary-slips")]
     public ActionResult<List<SalarySlip>> GetSalarySlips([FromQuery] Guid? payrunId, [FromQuery] Guid? employeeId, [FromQuery] Guid? companyId)

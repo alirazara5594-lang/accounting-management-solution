@@ -9,7 +9,7 @@ namespace Zenabook.Api.Controllers;
 public class JournalEntriesController(AccountingStore store) : ControllerBase
 {
     [HttpGet]
-    public IActionResult Get([FromQuery] JournalStatus? status) => Ok(store.Entries.Where(e => status is null || e.Status == status).OrderByDescending(e => e.Date));
+    public IActionResult Get([FromQuery] JournalStatus? status) => Ok(store.Entries.Where(e => status is null || e.Status == status).OrderByDescending(e => e.Date).ThenByDescending(e => e.Reference));
 
     [HttpGet("{id:guid}")]
     public IActionResult GetOne(Guid id) => store.FindEntry(id) is { } entry ? Ok(entry) : NotFound();

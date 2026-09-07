@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { DataToolbar } from '@/components/ui/data-toolbar';
 import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
+import { CompactSelect } from './components/CompactSelect';
 import { getActiveCurrency } from '@/lib/currency';
 import type { Entity } from './EntitySettings';
 
@@ -211,7 +212,7 @@ export const BankingWorkspace: React.FC<BankingWorkspaceProps> = ({ subView, act
     counterparty: '',
     amount: '',
     paymentMode: 'Wire Transfer' as PaymentMode,
-    reference: `PAY-${Math.floor(1000 + Math.random() * 9000)}`,
+    reference: 'PAY-00001',
     description: ''
   });
 
@@ -222,7 +223,7 @@ export const BankingWorkspace: React.FC<BankingWorkspaceProps> = ({ subView, act
     amount: '',
     paymentMode: 'RTGS' as PaymentMode,
     exchangeRate: '1.0',
-    reference: `TRF-${Math.floor(1000 + Math.random() * 9000)}`,
+    reference: 'TRF-00001',
     description: 'Inter-account fund transfer'
   });
 
@@ -1022,28 +1023,36 @@ const formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 
             <div className="form-grid">
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">Source Account (Transfer Out)</label>
-                <select
+                <CompactSelect
                   value={transferForm.sourceAccountId}
-                  onChange={e => setTransferForm({ ...transferForm, sourceAccountId: e.target.value })}
-                  className="w-full h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs font-medium"
-                >
-                  {bankAccounts.map(b => (
-                    <option key={b.id} value={b.id}>{b.name} — Balance: {formatMoney(b.balance, b.currency)}</option>
-                  ))}
-                </select>
+                  onChange={v => setTransferForm({ ...transferForm, sourceAccountId: v })}
+                  placeholder="Select source account..."
+                  searchPlaceholder="Search bank/cash account..."
+                  options={bankAccounts.map(b => ({
+                    value: b.id,
+                    label: b.name,
+                    sublabel: `Balance: ${formatMoney(b.balance, b.currency)}`,
+                    badge: b.currency
+                  }))}
+                  className="h-9 text-xs font-medium"
+                />
               </div>
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">Target Account (Transfer In)</label>
-                <select
+                <CompactSelect
                   value={transferForm.targetAccountId}
-                  onChange={e => setTransferForm({ ...transferForm, targetAccountId: e.target.value })}
-                  className="w-full h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs font-medium"
-                >
-                  {bankAccounts.map(b => (
-                    <option key={b.id} value={b.id}>{b.name} — Balance: {formatMoney(b.balance, b.currency)}</option>
-                  ))}
-                </select>
+                  onChange={v => setTransferForm({ ...transferForm, targetAccountId: v })}
+                  placeholder="Select target account..."
+                  searchPlaceholder="Search bank/cash account..."
+                  options={bankAccounts.map(b => ({
+                    value: b.id,
+                    label: b.name,
+                    sublabel: `Balance: ${formatMoney(b.balance, b.currency)}`,
+                    badge: b.currency
+                  }))}
+                  className="h-9 text-xs font-medium"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1086,7 +1095,6 @@ const formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 
             </div>
             <div className="modal-footer">
               <button type="button" className="secondary" onClick={() => setIsTransferModalOpen(false)}>Cancel</button>
-              <button type="button" className="secondary" onClick={(e) => { e.preventDefault(); alert("Draft saved locally"); }}>Save Draft</button>
               <button type="submit" className="primary">Execute Transfer</button>
             </div>
           </form>

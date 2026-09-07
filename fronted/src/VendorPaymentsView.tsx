@@ -11,6 +11,7 @@ import { DataToolbar } from '@/components/ui/data-toolbar'
 import { KpiCard, KpiGrid } from '@/components/ui/kpi-card'
 import { EmptyState, TableSkeleton } from './components/ui/empty-state'
 import { StatusChip } from './components/ui/status-chip'
+import { CompactSelect } from './components/CompactSelect'
 import { money } from '@/lib/currency'
 import type { Entity } from './EntitySettings'
 import jsPDF from 'jspdf'
@@ -34,6 +35,21 @@ const statusStyles: Record<string, { label: string; hex: string }> = {
   Pending: { label: 'Pending', hex: '#f59e0b' },
   Failed: { label: 'Failed', hex: '#ef4444' }
 }
+
+const getNextPaymentReference = (allPayments: VendorPayment[] = []): string => {
+  let maxSeq = 0;
+  for (const p of allPayments) {
+    if (!p?.reference) continue;
+    const match = p.reference.match(/PAY-(\d+)/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num > maxSeq && num < 1000000) {
+        maxSeq = num;
+      }
+    }
+  }
+  return `PAY-${String(maxSeq + 1).padStart(5, '0')}`;
+};
 
 interface VendorPaymentsViewProps {
   activeEntityId: string
@@ -67,9 +83,29 @@ export const VendorPaymentsView: React.FC<VendorPaymentsViewProps> = ({
     withdrawFromAccountId: '',
     amount: '',
     currency: 'PKR',
-    reference: `PAY-${Math.floor(1000 + Math.random() * 9000)}`,
-    description: ''
+    reference: 'PAY-00001',
+    description: 'Vendor invoice payment disbursement.'
   })
+
+  // Listen for 1-click 'Pay Bill' from Vendor Bills Workspace
+  useEffect(() => {
+    const raw = localStorage.getItem('ams_pending_vendor_payment');
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        localStorage.removeItem('ams_pending_vendor_payment');
+        if (parsed.vendorId) {
+          setForm(prev => ({
+            ...prev,
+            vendorId: parsed.vendorId,
+            billId: parsed.billId || '',
+            amount: parsed.amount ? String(parsed.amount) : prev.amount
+          }));
+          setIsModalOpen(true);
+        }
+      } catch {}
+    }
+  }, []);
 
   const { saveDraft, clearDraft } = useFormDraft('vendor_payment', form, setForm, isModalOpen)
 
@@ -107,7 +143,7 @@ export const VendorPaymentsView: React.FC<VendorPaymentsViewProps> = ({
       withdrawFromAccountId: withdrawAccounts[0]?.id || '',
       amount: '',
       currency: 'PKR',
-      reference: `PAY-${Math.floor(1000 + Math.random() * 9000)}`,
+      reference: getNextPaymentReference(payments),
       description: 'Vendor invoice payment disbursement.'
     })
     setModalTab('vendor')
@@ -539,36 +575,37 @@ export const VendorPaymentsView: React.FC<VendorPaymentsViewProps> = ({
                     <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
                       <span className="text-rose-500 font-bold mr-1">*</span> Vendor / Supplier
                     </label>
-                    <select
+                    <CompactSelect
                       value={form.vendorId}
-                      onChange={e => onVendorChange(e.target.value)}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      <option value="">Select a vendor...</option>
-                      {vendors.map((v: any) => (
-                        <option key={v.id} value={v.id}>
-                          {v.name} {v.vendorNumber ? `(${v.vendorNumber})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={v => onVendorChange(v)}
+                      placeholder="Select a vendor..."
+                      searchPlaceholder="Search vendor by name or code..."
+                      options={vendors.map((v: any) => ({
+                        value: v.id,
+                        label: v.name,
+                        badge: v.vendorNumber || undefined,
+                      }))}
+                      className="h-10 text-xs font-semibold"
+                    />
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
                       Apply to Open Bill (Optional)
                     </label>
-                    <select
+                    <CompactSelect
                       value={form.billId}
-                      onChange={e => onBillChange(e.target.value)}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      <option value="">-- Direct Advance / On-Account Payment --</option>
-                      {bills.map(b => (
-                        <option key={b.id} value={b.id}>
-                          {b.billNumber} — Due: {money(b.amountDue)}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={v => onBillChange(v)}
+                      placeholder="-- Direct Advance / On-Account Payment --"
+                      searchPlaceholder="Search bill by number..."
+                      clearLabel="-- Direct Advance / On-Account Payment --"
+                      options={bills.map(b => ({
+                        value: b.id,
+                        label: b.billNumber,
+                        sublabel: `Due: ${money(b.amountDue)}`,
+                      }))}
+                      className="h-10 text-xs font-semibold"
+                    />
                   </div>
 
                   <div>
@@ -591,18 +628,18 @@ export const VendorPaymentsView: React.FC<VendorPaymentsViewProps> = ({
                     <label className="block text-xs font-semibold text-[var(--color-text-strong)] mb-1.5">
                       <span className="text-rose-500 font-bold mr-1">*</span> Withdraw From Bank / Cash Account
                     </label>
-                    <select
+                    <CompactSelect
                       value={form.withdrawFromAccountId}
-                      onChange={e => setForm({ ...form, withdrawFromAccountId: e.target.value })}
-                      className="w-full h-10 px-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-strong)] focus:border-[var(--color-primary)] outline-none shadow-2xs"
-                    >
-                      <option value="">Select funding account...</option>
-                      {withdrawAccounts.map(acc => (
-                        <option key={acc.id} value={acc.id}>
-                          {acc.code} — {acc.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={v => setForm({ ...form, withdrawFromAccountId: v })}
+                      placeholder="Select funding account..."
+                      searchPlaceholder="Search bank / cash account..."
+                      options={withdrawAccounts.map(acc => ({
+                        value: acc.id,
+                        label: `${acc.code} — ${acc.name}`,
+                        badge: 'Bank/Cash'
+                      }))}
+                      className="h-10 text-xs font-semibold"
+                    />
                   </div>
 
                   <div>
@@ -749,9 +786,6 @@ export const VendorPaymentsView: React.FC<VendorPaymentsViewProps> = ({
 
               <div className="flex items-center gap-2">
                 <button type="button" className="h-9 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium hover:bg-[var(--color-surface-muted)] transition-colors" onClick={() => setIsModalOpen(false)}>Cancel</button>
-                {modalTab !== 'preview' && (
-                  <button type="button" className="h-9 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium hover:bg-[var(--color-surface-muted)] transition-colors" onClick={(e) => { e.preventDefault(); saveDraft(); notify('Payment draft saved locally.'); }}>Save Draft</button>
-                )}
 
                 {modalTab !== 'vendor' && (
                   <button type="button" onClick={() => { if (modalTab === 'preview') setModalTab('summary'); else if (modalTab === 'summary') setModalTab('account'); else if (modalTab === 'account') setModalTab('vendor'); }} className="h-9 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-medium hover:bg-[var(--color-surface-muted)] transition-colors flex items-center gap-1">

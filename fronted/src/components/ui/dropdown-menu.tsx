@@ -4,28 +4,35 @@ import { createPortal } from "react-dom"
 
 import { cn } from "@/lib/utils"
 
-const MenuContext = createContext<{ open: boolean; setOpen: (open: boolean) => void }>({
+const MenuContext = createContext<{
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  triggerRef: React.RefObject<HTMLDivElement | null>;
+}>({
   open: false,
   setOpen: () => {},
+  triggerRef: { current: null },
 })
 
 function DropdownMenu({ children }: { children?: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
-  const value = React.useMemo(() => ({ open, setOpen }), [open])
   const ref = React.useRef<HTMLDivElement>(null)
+  const value = React.useMemo(() => ({ open, setOpen, triggerRef: ref }), [open])
 
   React.useEffect(() => {
     if (!open) return
-    const onClick = (e: MouseEvent) => {
+    const onClick = (e: MouseEvent | TouchEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false)
     }
     document.addEventListener("mousedown", onClick)
+    document.addEventListener("touchstart", onClick)
     document.addEventListener("keydown", onKey)
     return () => {
       document.removeEventListener("mousedown", onClick)
+      document.removeEventListener("touchstart", onClick)
       document.removeEventListener("keydown", onKey)
     }
   }, [open])
@@ -70,22 +77,63 @@ function DropdownMenuContent({
   className,
   align = "start",
   children,
+  style,
+  ...props
 }: React.HTMLAttributes<HTMLDivElement> & {
   align?: "start" | "end" | "center"
 }) {
-  const { open, setOpen } = useContext(MenuContext)
+  const { open, setOpen, triggerRef } = useContext(MenuContext)
+  const [coords, setCoords] = React.useState<{ top: number; left: number }>({ top: 0, left: 0 })
+  const contentRef = React.useRef<HTMLDivElement>(null)
+
+  const updatePosition = React.useCallback(() => {
+    if (!triggerRef.current) return
+    const rect = triggerRef.current.getBoundingClientRect()
+    const contentWidth = contentRef.current?.offsetWidth || 160
+    let left = rect.left
+    if (align === "end") {
+      left = rect.right - contentWidth
+    } else if (align === "center") {
+      left = rect.left + (rect.width - contentWidth) / 2
+    }
+    if (left < 8) left = 8
+    if (left + contentWidth > window.innerWidth - 8) {
+      left = window.innerWidth - contentWidth - 8
+    }
+    const top = rect.bottom + 4
+    setCoords({ top, left })
+  }, [align, triggerRef])
+
+  React.useEffect(() => {
+    if (!open) return
+    updatePosition()
+    const handleScrollOrResize = () => updatePosition()
+    window.addEventListener("scroll", handleScrollOrResize, true)
+    window.addEventListener("resize", handleScrollOrResize)
+    return () => {
+      window.removeEventListener("scroll", handleScrollOrResize, true)
+      window.removeEventListener("resize", handleScrollOrResize)
+    }
+  }, [open, updatePosition])
+
   if (!open) return null
   return createPortal(
     <div
+      ref={contentRef}
       data-slot="dropdown-menu-content"
       onClick={() => setOpen(false)}
+      style={{
+        position: "fixed",
+        top: `${coords.top}px`,
+        left: `${coords.left}px`,
+        zIndex: 99999,
+        ...style,
+      }}
       className={cn(
-        "absolute z-50 mt-1 min-w-32 overflow-x-hidden overflow-y-auto rounded-2xl bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/5 outline-none",
-        align === "end" && "right-0",
-        align === "center" && "left-1/2 -translate-x-1/2",
-        align === "start" && "left-0",
+        "min-w-32 overflow-x-hidden overflow-y-auto rounded-2xl border border-border/80 bg-popover/98 backdrop-blur-xl p-1 text-popover-foreground shadow-2xl ring-1 ring-foreground/5 outline-none animate-in fade-in zoom-in-95 duration-100",
         className
       )}
+      {...props}
     >
       {children}
     </div>,
